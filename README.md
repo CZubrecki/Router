@@ -165,6 +165,53 @@ router.dismissFullscreenCover()
 
 `SheetPresentation` and `FullscreenCoverPresentation` both conform to `Identifiable`, so they bind directly to SwiftUI's `.sheet(item:)` and `.fullScreenCover(item:)` modifiers.
 
+### Modal behavior
+
+Sheets and full-screen covers are **global** to the router — there is one of each at a time, and they persist across tab switches by design. This matches iOS native apps like Clock: tap "+" on Alarms to open the new-alarm sheet, then tap Timers, and the sheet stays visible on top.
+
+In practice, end users can't *trigger* a tab switch during a modal — SwiftUI's `.sheet()` covers the tab bar at most detents and blocks underlying interaction. So the persistence rule mainly affects programmatic switches (notifications, deep links).
+
+### Nested sheets
+
+The router holds at most one sheet. For sub-sheets within a flow (e.g. compose → photo picker, email → OTP), present them with a local `@State` binding *inside the parent sheet's view*. SwiftUI stacks them visually; the router stays focused on top-level flows.
+
+```swift
+struct EmailSheetView: View {
+    @Environment(AppRouter.self) private var router
+    @State private var otpPresented = false
+
+    var body: some View {
+        Form {
+            Button("Send code") { otpPresented = true }
+        }
+        .sheet(isPresented: $otpPresented) {
+            OTPSheetView()        // visually stacks over the email sheet
+        }
+    }
+}
+```
+
+Dismissing the parent sheet (via `router.dismissSheet()`) collapses the entire SwiftUI sheet hierarchy.
+
+### Handling notifications
+
+When a notification or background event should present a sheet, present it *without* changing tabs — the user returns to wherever they were:
+
+```swift
+.onContinueUserActivity("openAlarm") { activity in
+    if let alarmId = activity.userInfo?["id"] as? UUID {
+        router.present(sheet: .editAlarm(id: alarmId))
+    }
+}
+```
+
+If the notification should also change the active tab, do both:
+
+```swift
+router.switchTab(to: .alarms)
+router.present(sheet: .editAlarm(id: alarmId))
+```
+
 ## Deep linking
 
 Conform your tab, destination, sheet, and cover types to the corresponding `URLRoutable*` protocols. Sheet and cover conformance is optional — the router only checks at runtime.
@@ -249,6 +296,39 @@ For universal links (`https://example.com/...`), pass `treatHostAsPath: false` s
 - **Sheets:** `present(sheet:)`, `navigateInSheet(to:)`, `popInSheet(_:)`, `popInSheetToRoot()`, `dismissSheet()`
 - **Covers:** `present(fullscreenCover:)`, `navigateInFullscreenCover(to:)`, `popInFullscreenCover(_:)`, `popInFullscreenCoverToRoot()`, `dismissFullscreenCover()`
 - **Deep links:** `handleDeepLink(url:treatHostAsPath:sheetPrefix:coverPrefix:)`, `View.onOpenURL(with:)`
+
+## Status
+
+Router is in **0.x** — the public API may evolve between minor versions as real-world usage shakes out details. Pinning to `.upToNextMinor(from: "0.1.0")` is recommended until 1.0.0.
+
+**Known limitations in 0.1**
+
+- No state restoration. Cold-launching the app loses presented sheets, covers, and per-tab navigation stacks. The presentation structs aren't `Codable` yet.
+- No unit tests shipped with the package. Coming in 0.2.
+- The router is designed around `TabView` + `NavigationStack`. **`NavigationSplitView` (three-column iPad / macOS layouts) is not modeled.** Apps using `.tabViewStyle(.sidebarAdaptable)` on iPadOS 18+ work out of the box; native split-view layouts are out of scope for now.
+- Single sheet at a time at the router level. Nested sheets work via SwiftUI `@State` (see [Nested sheets](#nested-sheets) above), but the router doesn't track sub-sheets.
+
+## Roadmap
+
+**0.2 — Quality + state restoration**
+- Unit test suite (`Testing` framework)
+- `Codable` conformance for `SheetPresentation` / `FullscreenCoverPresentation` plus a `Router.State` snapshot for `SceneStorage` integration
+- CI workflow on GitHub Actions
+- Universal links example in the README
+
+**0.3 — Ergonomics**
+- `popUntil(where:)` predicate-based pop
+- `navigate(to:replacingTopWith:)` for sign-in → home flows
+- Optional sheet stacking (`pushSheet(_:)` / `sheetStack`) if real-world usage demands centralized sub-sheet state
+
+**Future — iPad and macOS first-class support**
+- A sibling `SplitRouter` (or generalized model) for `NavigationSplitView`-driven three-column layouts
+- macOS-specific affordances: multi-window scenes, toolbar-driven actions, removing the iOS-only `fullScreenCover` API on that platform
+- `TabSection` and `TabViewCustomization` integration patterns documented as a guide
+
+**Out of scope**
+- Combine-based reactive APIs (the router is built around Swift Concurrency / `@Observable`).
+- View-layer concerns like presentation detents, custom transitions, and sheet sizing — handled by SwiftUI modifiers at the call site.
 
 ## License
 
