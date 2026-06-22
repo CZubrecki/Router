@@ -139,6 +139,37 @@ router.popToRoot(in: .profile)     // a specific tab
 router.popAllToRoot()              // every tab
 ```
 
+### Native SwiftUI transitions (zoom, etc.)
+
+The router only manipulates the data layer (`[Destination]`, `presentedSheet`, …), so every native SwiftUI navigation transition — including the iOS 18 [zoom transition](https://developer.apple.com/documentation/swiftui/navigationtransition/zoom(sourceid:in:)) — works without router involvement. The router triggers the push; SwiftUI animates it.
+
+```swift
+struct HomeRoot: View {
+    @Environment(AppRouter.self) private var router
+    @Namespace private var namespace
+    let friends: [Friend]
+
+    var body: some View {
+        List(friends) { friend in
+            Button {
+                router.navigate(to: .friend(id: friend.id))
+            } label: {
+                FriendThumbnail(friend: friend)
+                    .matchedTransitionSource(id: friend.id, in: namespace)
+            }
+        }
+        .navigationDestination(for: AppDestination.self) { destination in
+            if case .friend(let id) = destination {
+                FriendDetailView(id: id)
+                    .navigationTransition(.zoom(sourceID: id, in: namespace))
+            }
+        }
+    }
+}
+```
+
+The same pattern applies to sheets and full-screen covers — apply `.navigationTransition(.zoom(sourceID:in:))` to the presented view.
+
 ## Sheets and full-screen covers
 
 Presentation state is held alongside its own navigation stack so they can't desync.
