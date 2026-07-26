@@ -24,7 +24,7 @@ Add the package to your project via Swift Package Manager:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/CZubrecki/Router.git", from: "0.1.0"),
+    .package(url: "https://github.com/CZubrecki/Router.git", from: "0.2.0"),
 ]
 ```
 
@@ -196,6 +196,43 @@ router.dismissFullscreenCover()
 
 `SheetPresentation` and `FullscreenCoverPresentation` both conform to `Identifiable`, so they bind directly to SwiftUI's `.sheet(item:)` and `.fullScreenCover(item:)` modifiers.
 
+### Navigation stacks inside a modal
+
+A modal that hosts a multi-step flow gets its own `NavigationStack`, driven by the presentation's bundled stack:
+
+```swift
+.fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
+    NavigationStack(path: router.fullscreenCoverPathBinding()) {
+        view(for: presentation.cover)
+            .navigationDestination(for: AppDestination.self) { destination in
+                view(for: destination)
+            }
+    }
+}
+```
+
+`sheetPathBinding()` does the same for sheets. Both read as empty and discard writes when nothing is presented, so the binding can be built before anything is on screen.
+
+### Swapping one cover for another
+
+SwiftUI drops the incoming presentation if you dismiss one full-screen cover and present another in the same update. `replace(fullscreenCover:)` handles the handoff: it dismisses the current cover and queues the replacement, which the host presents once dismissal finishes.
+
+```swift
+// From anywhere - e.g. a sign-up prompt inside an onboarding cover
+router.replace(fullscreenCover: .login)
+
+// Drained by the host
+.fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
+    view(for: presentation.cover)
+} onDismiss: {
+    if let next = router.takePendingFullscreenCover() {
+        DispatchQueue.main.async { router.present(fullscreenCover: next) }
+    }
+}
+```
+
+With nothing presented, `replace(fullscreenCover:)` presents immediately. Calling it again before the queue drains supersedes the queued cover. `dismissFullscreenCover()` cancels a queued replacement, so drain with `takePendingFullscreenCover()` rather than dismissing again.
+
 ### Modal behavior
 
 Sheets and full-screen covers are **global** to the router — there is one of each at a time, and they persist across tab switches by design. This matches iOS native apps like Clock: tap "+" on Alarms to open the new-alarm sheet, then tap Timers, and the sheet stays visible on top.
@@ -321,33 +358,37 @@ For universal links (`https://example.com/...`), pass `treatHostAsPath: false` s
 
 ### Router methods at a glance
 
-- **Path access:** `subscript(tab:)`, `currentPath`, `pathBinding(for:)`
+- **Path access:** `subscript(tab:)`, `currentPath`, `pathBinding(for:)`, `sheetPathBinding()`, `fullscreenCoverPathBinding()`
 - **Tab navigation:** `navigate(to:)`, `navigate(to:in:)`, `switchTab(to:navigatingTo:)`, `switchTab(to:resetTo:)`
 - **Pop:** `pop(_:)`, `popTo(_:in:)`, `popToRoot(in:)`, `popAllToRoot()`
 - **Sheets:** `present(sheet:)`, `navigateInSheet(to:)`, `popInSheet(_:)`, `popInSheetToRoot()`, `dismissSheet()`
-- **Covers:** `present(fullscreenCover:)`, `navigateInFullscreenCover(to:)`, `popInFullscreenCover(_:)`, `popInFullscreenCoverToRoot()`, `dismissFullscreenCover()`
+- **Covers:** `present(fullscreenCover:)`, `replace(fullscreenCover:)`, `takePendingFullscreenCover()`, `navigateInFullscreenCover(to:)`, `popInFullscreenCover(_:)`, `popInFullscreenCoverToRoot()`, `dismissFullscreenCover()`
 - **Deep links:** `handleDeepLink(url:treatHostAsPath:sheetPrefix:coverPrefix:)`, `View.onOpenURL(with:)`
 
 ## Status
 
-Router is in **0.x** — the public API may evolve between minor versions as real-world usage shakes out details. Pinning to `.upToNextMinor(from: "0.1.0")` is recommended until 1.0.0.
+Router is in **0.x** — the public API may evolve between minor versions as real-world usage shakes out details. Pinning to `.upToNextMinor(from: "0.2.0")` is recommended until 1.0.0.
 
-**Known limitations in 0.1**
+Tests run on the iOS simulator, since the package targets iOS only:
+
+```sh
+xcodebuild test -scheme Router -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+```
+
+**Known limitations in 0.2**
 
 - No state restoration. Cold-launching the app loses presented sheets, covers, and per-tab navigation stacks. The presentation structs aren't `Codable` yet.
-- No unit tests shipped with the package. Coming in 0.2.
 - The router is designed around `TabView` + `NavigationStack`. **`NavigationSplitView` (three-column iPad / macOS layouts) is not modeled.** Apps using `.tabViewStyle(.sidebarAdaptable)` on iPadOS 18+ work out of the box; native split-view layouts are out of scope for now.
 - Single sheet at a time at the router level. Nested sheets work via SwiftUI `@State` (see [Nested sheets](#nested-sheets) above), but the router doesn't track sub-sheets.
 
 ## Roadmap
 
-**0.2 — Quality + state restoration**
-- Unit test suite (`Testing` framework)
+**0.3 — State restoration**
 - `Codable` conformance for `SheetPresentation` / `FullscreenCoverPresentation` plus a `Router.State` snapshot for `SceneStorage` integration
 - CI workflow on GitHub Actions
 - Universal links example in the README
 
-**0.3 — Ergonomics**
+**0.4 — Ergonomics**
 - `popUntil(where:)` predicate-based pop
 - `navigate(to:replacingTopWith:)` for sign-in → home flows
 - Optional sheet stacking (`pushSheet(_:)` / `sheetStack`) if real-world usage demands centralized sub-sheet state

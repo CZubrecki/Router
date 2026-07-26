@@ -16,7 +16,10 @@ let package = Package(
         .target(
             name: "Router"
         ),
-
+        .testTarget(
+            name: "RouterTests",
+            dependencies: ["Router"]
+        ),
     ],
     swiftLanguageModes: [.v6]
 )

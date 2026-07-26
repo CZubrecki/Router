@@ -61,6 +61,10 @@ public final class Router<
 	/// when no cover is presented.
 	public var presentedFullscreenCover: FullscreenCoverPresentation<FullscreenCover, Destination>?
 
+	/// A cover queued by ``replace(fullscreenCover:)``, waiting for the outgoing cover to finish
+	/// dismissing, or `nil` when nothing is queued.
+	public private(set) var pendingFullscreenCover: FullscreenCover?
+
 	private var paths: [Tab: [Destination]] = [:]
 
 	/// Creates a router with the given initial tab selected.
@@ -94,6 +98,32 @@ public final class Router<
 		Binding(
 			get: { self[tab] },
 			set: { self[tab] = $0 },
+		)
+	}
+
+	/// Returns a two-way binding to the presented sheet's navigation stack, suitable for a
+	/// `NavigationStack(path:)` inside the sheet.
+	///
+	/// Reads return an empty array when no sheet is presented, and writes are discarded, so the
+	/// binding is safe to build before anything is presented.
+	/// - Returns: A binding that reads from and writes to the presented sheet's stack.
+	public func sheetPathBinding() -> Binding<[Destination]> {
+		Binding(
+			get: { self.presentedSheet?.stack ?? [] },
+			set: { self.presentedSheet?.stack = $0 },
+		)
+	}
+
+	/// Returns a two-way binding to the presented full-screen cover's navigation stack, suitable
+	/// for a `NavigationStack(path:)` inside the cover.
+	///
+	/// Reads return an empty array when no cover is presented, and writes are discarded, so the
+	/// binding is safe to build before anything is presented.
+	/// - Returns: A binding that reads from and writes to the presented cover's stack.
+	public func fullscreenCoverPathBinding() -> Binding<[Destination]> {
+		Binding(
+			get: { self.presentedFullscreenCover?.stack ?? [] },
+			set: { self.presentedFullscreenCover?.stack = $0 },
 		)
 	}
 
@@ -240,6 +270,48 @@ public final class Router<
 		presentedFullscreenCover = FullscreenCoverPresentation(cover: fullscreenCover)
 	}
 
+	/// Swaps the presented full-screen cover for a different one.
+	///
+	/// SwiftUI cannot dismiss one cover and present another in the same update — the incoming
+	/// presentation is dropped. When a cover is already showing, this dismisses it and queues the
+	/// replacement in ``pendingFullscreenCover`` instead; the host presents the queued cover once
+	/// dismissal completes:
+	///
+	/// ```swift
+	/// .fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
+	///     view(for: presentation.cover)
+	/// } onDismiss: {
+	///     if let next = router.takePendingFullscreenCover() {
+	///         // A cover can't be presented from within its predecessor's dismissal.
+	///         DispatchQueue.main.async { router.present(fullscreenCover: next) }
+	///     }
+	/// }
+	/// ```
+	///
+	/// When nothing is presented or queued this presents immediately and queues nothing. Replacing
+	/// again before the queue drains supersedes the queued cover rather than presenting into a
+	/// window that is still dismissing.
+	/// - Parameter fullscreenCover: The cover that should end up presented.
+	public func replace(fullscreenCover: FullscreenCover) {
+		guard presentedFullscreenCover != nil || pendingFullscreenCover != nil else {
+			present(fullscreenCover: fullscreenCover)
+			return
+		}
+
+		pendingFullscreenCover = fullscreenCover
+		presentedFullscreenCover = nil
+	}
+
+	/// Consumes the cover queued by ``replace(fullscreenCover:)``.
+	///
+	/// Call from the host's dismissal handler. Returns `nil` — and does nothing — when no
+	/// replacement is queued, so it is safe to call on every dismissal.
+	/// - Returns: The queued cover, or `nil` if none was queued.
+	public func takePendingFullscreenCover() -> FullscreenCover? {
+		defer { pendingFullscreenCover = nil }
+		return pendingFullscreenCover
+	}
+
 	/// Pushes a destination onto the currently presented full-screen cover's navigation stack.
 	///
 	/// No-op when no cover is presented.
@@ -279,7 +351,12 @@ public final class Router<
 	}
 
 	/// Dismisses the currently presented full-screen cover and clears its navigation stack.
+	///
+	/// Also discards any cover queued by ``replace(fullscreenCover:)`` — an explicit dismissal
+	/// means nothing should end up presented. Hosts draining the queue in their dismissal handler
+	/// should call ``takePendingFullscreenCover()`` rather than this method.
 	public func dismissFullscreenCover() {
 		presentedFullscreenCover = nil
+		pendingFullscreenCover = nil
 	}
 }

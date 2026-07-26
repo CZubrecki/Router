@@ -1,0 +1,198 @@
+import Testing
+@testable import Router
+
+@MainActor
+@Suite("Tab and stack navigation")
+struct NavigationTests {
+	@Test("A new router selects its initial tab with every stack empty")
+	func startsEmpty() {
+		let router = TestRouter(initialTab: .home)
+
+		#expect(router.selectedTab == .home)
+		#expect(router.currentPath.isEmpty)
+		#expect(router[.profile].isEmpty)
+	}
+
+	@Test("Navigating pushes onto the selected tab")
+	func navigatePushesOntoSelectedTab() {
+		let router = TestRouter(initialTab: .home)
+
+		router.navigate(to: .photos)
+		router.navigate(to: .friend(id: 42))
+
+		#expect(router.currentPath == [.photos, .friend(id: 42)])
+		#expect(router[.profile].isEmpty)
+	}
+
+	@Test("Navigating into another tab leaves the selection alone")
+	func navigateIntoOtherTab() {
+		let router = TestRouter(initialTab: .home)
+
+		router.navigate(to: .photos, in: .profile)
+
+		#expect(router.selectedTab == .home)
+		#expect(router.currentPath.isEmpty)
+		#expect(router[.profile] == [.photos])
+	}
+
+	@Test("Variadic navigation pushes in order")
+	func variadicNavigate() {
+		let router = TestRouter(initialTab: .home)
+
+		router.navigate(to: .photos, .settings, .friend(id: 7))
+
+		#expect(router.currentPath == [.photos, .settings, .friend(id: 7)])
+	}
+
+	@Test("Tab stacks survive switching away and back")
+	func stacksArePerTab() {
+		let router = TestRouter(initialTab: .home)
+		router.navigate(to: .photos)
+
+		router.switchTab(to: .profile)
+		router.navigate(to: .settings)
+		router.switchTab(to: .home)
+
+		#expect(router.currentPath == [.photos])
+		#expect(router[.profile] == [.settings])
+	}
+
+	@Test("Switching tab can push in the same call")
+	func switchTabNavigatingTo() {
+		let router = TestRouter(initialTab: .home)
+
+		router.switchTab(to: .profile, navigatingTo: .friend(id: 1))
+
+		#expect(router.selectedTab == .profile)
+		#expect(router[.profile] == [.friend(id: 1)])
+	}
+
+	@Test("Resetting a tab replaces its stack rather than appending")
+	func switchTabResetTo() {
+		let router = TestRouter(initialTab: .home)
+		router.navigate(to: .photos, in: .profile)
+
+		router.switchTab(to: .profile, resetTo: .settings, .friend(id: 3))
+
+		#expect(router.selectedTab == .profile)
+		#expect(router[.profile] == [.settings, .friend(id: 3)])
+	}
+
+	@Test("Popping removes from the top")
+	func pop() {
+		let router = TestRouter(initialTab: .home)
+		router.navigate(to: .photos, .settings, .friend(id: 9))
+
+		router.pop()
+
+		#expect(router.currentPath == [.photos, .settings])
+
+		router.pop(2)
+
+		#expect(router.currentPath.isEmpty)
+	}
+
+	@Test("Popping past the root empties the stack without trapping")
+	func popBeyondDepth() {
+		let router = TestRouter(initialTab: .home)
+		router.navigate(to: .photos)
+
+		router.pop(10)
+
+		#expect(router.currentPath.isEmpty)
+	}
+
+	@Test("Popping an empty stack is a no-op")
+	func popEmptyStack() {
+		let router = TestRouter(initialTab: .home)
+
+		router.pop()
+
+		#expect(router.currentPath.isEmpty)
+	}
+
+	@Test("Popping to a destination keeps that destination on top")
+	func popTo() {
+		let router = TestRouter(initialTab: .home)
+		router.navigate(to: .photos, .settings, .friend(id: 5))
+
+		router.popTo(.settings)
+
+		#expect(router.currentPath == [.photos, .settings])
+	}
+
+	@Test("Popping to a destination that isn't in the stack changes nothing")
+	func popToMissingDestination() {
+		let router = TestRouter(initialTab: .home)
+		router.navigate(to: .photos, .settings)
+
+		router.popTo(.friend(id: 404))
+
+		#expect(router.currentPath == [.photos, .settings])
+	}
+
+	@Test("Popping to a repeated destination truncates at its first occurrence")
+	func popToRepeatedDestination() {
+		let router = TestRouter(initialTab: .home)
+		router.navigate(to: .photos, .settings, .photos, .friend(id: 1))
+
+		router.popTo(.photos)
+
+		#expect(router.currentPath == [.photos])
+	}
+
+	@Test("Popping to root clears the selected tab, or a named one")
+	func popToRoot() {
+		let router = TestRouter(initialTab: .home)
+		router.navigate(to: .photos, .settings)
+		router.navigate(to: .friend(id: 2), in: .profile)
+
+		router.popToRoot()
+
+		#expect(router.currentPath.isEmpty)
+		#expect(router[.profile] == [.friend(id: 2)])
+
+		router.popToRoot(in: .profile)
+
+		#expect(router[.profile].isEmpty)
+	}
+
+	@Test("Popping everything to root clears every tab but keeps the selection")
+	func popAllToRoot() {
+		let router = TestRouter(initialTab: .home)
+		router.navigate(to: .photos)
+		router.navigate(to: .settings, in: .profile)
+		router.switchTab(to: .profile)
+
+		router.popAllToRoot()
+
+		#expect(router[.home].isEmpty)
+		#expect(router[.profile].isEmpty)
+		#expect(router.selectedTab == .profile)
+	}
+
+	@Test("A tab's stack can be replaced through the subscript")
+	func subscriptWrites() {
+		let router = TestRouter(initialTab: .home)
+
+		router[.profile] = [.photos, .settings]
+
+		#expect(router[.profile] == [.photos, .settings])
+	}
+
+	@Test("The path binding reads and writes the tab's stack")
+	func pathBinding() {
+		let router = TestRouter(initialTab: .home)
+		let binding = router.pathBinding(for: .home)
+
+		#expect(binding.wrappedValue.isEmpty)
+
+		router.navigate(to: .photos)
+
+		#expect(binding.wrappedValue == [.photos])
+
+		binding.wrappedValue = [.settings]
+
+		#expect(router[.home] == [.settings])
+	}
+}
