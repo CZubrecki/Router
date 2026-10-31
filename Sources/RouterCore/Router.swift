@@ -473,7 +473,7 @@ public final class Router<
 		emit(.switchedTab(from: previous, to: tab))
 	}
 
-	func push(_ destinations: [Destination], in context: Context) {
+	private func push(_ destinations: [Destination], in context: Context) {
 		guard !destinations.isEmpty, let context = resolve(context) else { return }
 		writeStack(stack(in: context) + destinations, in: context)
 		emit(.pushed(destinations, in: context))

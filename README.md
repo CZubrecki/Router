@@ -39,7 +39,7 @@ Add the package with Swift Package Manager:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/CZubrecki/Router.git", .upToNextMinor(from: "0.5.0")),
+    .package(url: "https://github.com/CZubrecki/Router.git", .upToNextMajor(from: "1.0.0")),
 ]
 ```
 
@@ -50,7 +50,7 @@ Then depend on the library each target needs:
 .target(name: "AppUI", dependencies: [.product(name: "RouterUI", package: "Router")]),
 ```
 
-Upgrading from 0.2? See [MIGRATION.md](MIGRATION.md).
+Upgrading from 0.x? [MIGRATION.md](MIGRATION.md) lists every step with before-and-after code.
 
 # Core
 
@@ -579,11 +579,12 @@ xcodebuild test -scheme Router-Package \
 ```
 
 CI runs all of the above on every pull request and publishes DocC archives for both modules as a build artifact.
+Build them locally with `xcodebuild docbuild -scheme RouterCore -destination 'generic/platform=macOS'`.
 
 ## Status
 
-Router is in **0.x**: the public API may change between minor versions.
-Pin with `.upToNextMinor(from:)` until 1.0.
+Router follows semantic versioning from 1.0: breaking changes only in a new major version.
+Pin with `.upToNextMajor(from: "1.0.0")`.
 
 **Known limitations**
 
@@ -595,7 +596,6 @@ Pin with `.upToNextMinor(from:)` until 1.0.
 
 ## Roadmap
 
-- **1.0**: the deprecated 0.2 names are removed and `.upToNextMajor` becomes the recommended pin.
 - **Later**: first-class iPad and macOS layouts (`NavigationSplitView`, multi-window scenes).
 
 Out of scope: Combine APIs, and view-layer concerns like detents, transitions, and sheet sizing, which stay at the call site.
