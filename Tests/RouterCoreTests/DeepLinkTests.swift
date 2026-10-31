@@ -12,7 +12,7 @@ struct DeepLinkTests {
 	@Test("A tab URL selects the tab and replaces its stack")
 	func tabURL() throws {
 		let router = TestRouter(initialTab: .home)
-		router.navigate(to: .photos, in: .profile)
+		router.navigate(to: .photos, in: .tab(.profile))
 
 		router.handleDeepLink(url: try url("myapp://profile/friend/42"))
 
@@ -23,7 +23,7 @@ struct DeepLinkTests {
 	@Test("A bare tab URL selects the tab and clears its stack")
 	func bareTabURL() throws {
 		let router = TestRouter(initialTab: .home)
-		router.navigate(to: .photos, in: .settings)
+		router.navigate(to: .photos, in: .tab(.settings))
 
 		router.handleDeepLink(url: try url("myapp://settings"))
 
@@ -153,7 +153,7 @@ struct DeepLinkTests {
 	func rejectedModalLinkIsAtomic() throws {
 		let router = TestRouter(initialTab: .home)
 		router.present(sheet: .login)
-		router.navigateInSheet(to: .photos)
+		router.navigate(to: .photos, in: .sheet)
 
 		let result = router.handleDeepLink(url: try url("myapp://sheet/checkout/photos/nonsense"))
 

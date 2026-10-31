@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import RouterCore
 
@@ -20,7 +21,7 @@ struct ModalPresentationTests {
 	func presentSheetReplaces() {
 		let router = TestRouter(initialTab: .home)
 		router.present(sheet: .login)
-		router.navigateInSheet(to: .photos)
+		router.navigate(to: .photos, in: .sheet)
 
 		router.present(sheet: .checkout)
 
@@ -33,8 +34,8 @@ struct ModalPresentationTests {
 		let router = TestRouter(initialTab: .home)
 		router.present(sheet: .checkout)
 
-		router.navigateInSheet(to: .photos)
-		router.navigateInSheet(to: .settings, .friend(id: 8))
+		router.navigate(to: .photos, in: .sheet)
+		router.navigate(to: .settings, .friend(id: 8), in: .sheet)
 
 		#expect(router.presentedSheet?.stack == [.photos, .settings, .friend(id: 8)])
 		#expect(router.currentPath.isEmpty)
@@ -44,9 +45,9 @@ struct ModalPresentationTests {
 	func navigateInSheetWithoutPresentation() {
 		let router = TestRouter(initialTab: .home)
 
-		router.navigateInSheet(to: .photos)
-		router.popInSheet()
-		router.popInSheetToRoot()
+		router.navigate(to: .photos, in: .sheet)
+		router.pop(in: .sheet)
+		router.popToRoot(in: .sheet)
 
 		#expect(router.presentedSheet == nil)
 	}
@@ -55,13 +56,13 @@ struct ModalPresentationTests {
 	func popInSheet() {
 		let router = TestRouter(initialTab: .home)
 		router.present(sheet: .checkout)
-		router.navigateInSheet(to: .photos, .settings)
+		router.navigate(to: .photos, .settings, in: .sheet)
 
-		router.popInSheet()
+		router.pop(in: .sheet)
 
 		#expect(router.presentedSheet?.stack == [.photos])
 
-		router.popInSheet(10)
+		router.pop(10, in: .sheet)
 
 		#expect(router.presentedSheet?.stack.isEmpty == true)
 	}
@@ -70,9 +71,9 @@ struct ModalPresentationTests {
 	func popInSheetToRoot() {
 		let router = TestRouter(initialTab: .home)
 		router.present(sheet: .checkout)
-		router.navigateInSheet(to: .photos, .settings)
+		router.navigate(to: .photos, .settings, in: .sheet)
 
-		router.popInSheetToRoot()
+		router.popToRoot(in: .sheet)
 
 		#expect(router.presentedSheet?.sheet == .checkout)
 		#expect(router.presentedSheet?.stack.isEmpty == true)
@@ -82,9 +83,9 @@ struct ModalPresentationTests {
 	func dismissSheet() {
 		let router = TestRouter(initialTab: .home)
 		router.present(sheet: .checkout)
-		router.navigateInSheet(to: .photos)
+		router.navigate(to: .photos, in: .sheet)
 
-		router.dismissSheet()
+		router.dismiss(.sheet)
 
 		#expect(router.presentedSheet == nil)
 
@@ -99,7 +100,7 @@ struct ModalPresentationTests {
 		router.navigate(to: .photos)
 
 		router.present(sheet: .login)
-		router.navigateInSheet(to: .settings)
+		router.navigate(to: .settings, in: .sheet)
 
 		#expect(router.currentPath == [.photos])
 	}
@@ -110,7 +111,7 @@ struct ModalPresentationTests {
 	func presentCover() {
 		let router = TestRouter(initialTab: .home)
 
-		router.present(fullscreenCover: .onboarding)
+		router.present(cover: .onboarding)
 
 		#expect(router.presentedFullscreenCover?.cover == .onboarding)
 		#expect(router.presentedFullscreenCover?.stack.isEmpty == true)
@@ -119,10 +120,10 @@ struct ModalPresentationTests {
 	@Test("Navigating inside a cover pushes onto the cover's own stack")
 	func navigateInCover() {
 		let router = TestRouter(initialTab: .home)
-		router.present(fullscreenCover: .onboarding)
+		router.present(cover: .onboarding)
 
-		router.navigateInFullscreenCover(to: .photos)
-		router.navigateInFullscreenCover(to: .settings, .friend(id: 2))
+		router.navigate(to: .photos, in: .cover)
+		router.navigate(to: .settings, .friend(id: 2), in: .cover)
 
 		#expect(router.presentedFullscreenCover?.stack == [.photos, .settings, .friend(id: 2)])
 		#expect(router.currentPath.isEmpty)
@@ -132,9 +133,9 @@ struct ModalPresentationTests {
 	func navigateInCoverWithoutPresentation() {
 		let router = TestRouter(initialTab: .home)
 
-		router.navigateInFullscreenCover(to: .photos)
-		router.popInFullscreenCover()
-		router.popInFullscreenCoverToRoot()
+		router.navigate(to: .photos, in: .cover)
+		router.pop(in: .cover)
+		router.popToRoot(in: .cover)
 
 		#expect(router.presentedFullscreenCover == nil)
 	}
@@ -142,14 +143,14 @@ struct ModalPresentationTests {
 	@Test("Popping inside a cover removes from the top and clamps to the stack depth")
 	func popInCover() {
 		let router = TestRouter(initialTab: .home)
-		router.present(fullscreenCover: .onboarding)
-		router.navigateInFullscreenCover(to: .photos, .settings)
+		router.present(cover: .onboarding)
+		router.navigate(to: .photos, .settings, in: .cover)
 
-		router.popInFullscreenCover()
+		router.pop(in: .cover)
 
 		#expect(router.presentedFullscreenCover?.stack == [.photos])
 
-		router.popInFullscreenCover(10)
+		router.pop(10, in: .cover)
 
 		#expect(router.presentedFullscreenCover?.stack.isEmpty == true)
 	}
@@ -157,10 +158,10 @@ struct ModalPresentationTests {
 	@Test("Dismissing a cover discards its stack with it")
 	func dismissCover() {
 		let router = TestRouter(initialTab: .home)
-		router.present(fullscreenCover: .onboarding)
-		router.navigateInFullscreenCover(to: .photos)
+		router.present(cover: .onboarding)
+		router.navigate(to: .photos, in: .cover)
 
-		router.dismissFullscreenCover()
+		router.dismiss(.cover)
 
 		#expect(router.presentedFullscreenCover == nil)
 	}
@@ -169,10 +170,10 @@ struct ModalPresentationTests {
 	func sheetAndCoverStacksAreIndependent() {
 		let router = TestRouter(initialTab: .home)
 		router.present(sheet: .checkout)
-		router.present(fullscreenCover: .onboarding)
+		router.present(cover: .onboarding)
 
-		router.navigateInSheet(to: .photos)
-		router.navigateInFullscreenCover(to: .settings)
+		router.navigate(to: .photos, in: .sheet)
+		router.navigate(to: .settings, in: .cover)
 
 		#expect(router.presentedSheet?.stack == [.photos])
 		#expect(router.presentedFullscreenCover?.stack == [.settings])
@@ -184,7 +185,7 @@ struct ModalPresentationTests {
 	func replaceWithNothingPresented() {
 		let router = TestRouter(initialTab: .home)
 
-		router.replace(fullscreenCover: .onboarding)
+		router.replace(cover: .onboarding)
 
 		#expect(router.presentedFullscreenCover?.cover == .onboarding)
 		#expect(router.pendingFullscreenCover == nil)
@@ -193,71 +194,108 @@ struct ModalPresentationTests {
 	@Test("Replacing a live cover dismisses it and queues the replacement")
 	func replaceWhilePresented() {
 		let router = TestRouter(initialTab: .home)
-		router.present(fullscreenCover: .player)
-		router.navigateInFullscreenCover(to: .photos)
+		router.present(cover: .player)
+		router.navigate(to: .photos, in: .cover)
 
-		router.replace(fullscreenCover: .onboarding)
+		router.replace(cover: .onboarding)
 
 		#expect(router.presentedFullscreenCover == nil)
 		#expect(router.pendingFullscreenCover == .onboarding)
 	}
 
-	@Test("Draining the queue returns the replacement once and clears it")
-	func takePendingCover() {
+	@Test("The router presents the queued replacement itself on the next main-actor turn")
+	func replacementPresentsItself() async {
 		let router = TestRouter(initialTab: .home)
-		router.present(fullscreenCover: .player)
-		router.replace(fullscreenCover: .onboarding)
+		router.present(cover: .player)
+		router.navigate(to: .photos, in: .cover)
 
-		#expect(router.takePendingFullscreenCover() == .onboarding)
+		router.replace(cover: .onboarding)
+		await router.pendingCoverTask?.value
+
+		#expect(router.presentedFullscreenCover == FullscreenCoverPresentation(cover: .onboarding))
 		#expect(router.pendingFullscreenCover == nil)
-		#expect(router.takePendingFullscreenCover() == nil)
+		#expect(router.pendingCoverTask == nil)
 	}
 
-	@Test("Draining an empty queue is safe on every dismissal")
-	func takePendingCoverWhenEmpty() {
+	@Test("A cover dismissed through its binding hands off to the queued replacement")
+	func bindingDismissalHandsOff() async {
 		let router = TestRouter(initialTab: .home)
-		router.present(fullscreenCover: .onboarding)
-		router.dismissFullscreenCover()
+		router.restore(TestRouter.Snapshot(selectedTab: .home, pendingFullscreenCover: .player))
+		router.presentedFullscreenCover = FullscreenCoverPresentation(cover: .onboarding)
 
-		#expect(router.takePendingFullscreenCover() == nil)
-	}
-
-	@Test("The full replace round trip leaves only the replacement presented")
-	func replaceRoundTrip() {
-		let router = TestRouter(initialTab: .home)
-		router.present(fullscreenCover: .player)
-		router.navigateInFullscreenCover(to: .photos)
-
-		router.replace(fullscreenCover: .onboarding)
-		if let next = router.takePendingFullscreenCover() {
-			router.present(fullscreenCover: next)
-		}
-
-		#expect(router.presentedFullscreenCover?.cover == .onboarding)
-		#expect(router.presentedFullscreenCover?.stack.isEmpty == true)
 		#expect(router.pendingFullscreenCover == nil)
+
+		router.restore(TestRouter.Snapshot(
+			selectedTab: .home,
+			presentedFullscreenCover: FullscreenCoverPresentation(cover: .onboarding),
+			pendingFullscreenCover: .player,
+		))
+		router.presentedFullscreenCover = nil
+		await router.pendingCoverTask?.value
+
+		#expect(router.presentedFullscreenCover?.cover == .player)
 	}
 
-	@Test("Replacing twice before draining keeps only the latest replacement")
-	func replaceTwiceKeepsLatest() {
-		let router = TestRouter(initialTab: .home)
-		router.present(fullscreenCover: .player)
-
-		router.replace(fullscreenCover: .onboarding)
-		router.replace(fullscreenCover: .player)
+	@Test("A restored snapshot with a queued cover presents it")
+	func restoredPendingCoverPresents() async {
+		let router = TestRouter(snapshot: TestRouter.Snapshot(selectedTab: .home, pendingFullscreenCover: .player))
 
 		#expect(router.pendingFullscreenCover == .player)
+
+		await router.pendingCoverTask?.value
+
+		#expect(router.presentedFullscreenCover?.cover == .player)
+		#expect(router.pendingFullscreenCover == nil)
+	}
+
+	@Test("Presenting or deep-linking a cover directly supersedes a queued replacement")
+	func directPresentationSupersedes() async throws {
+		let router = TestRouter(initialTab: .home)
+		router.present(cover: .player)
+		router.replace(cover: .onboarding)
+		let task = try #require(router.pendingCoverTask)
+
+		router.present(cover: .player)
+		await task.value
+
+		#expect(router.presentedFullscreenCover?.cover == .player)
+		#expect(router.pendingFullscreenCover == nil)
+
+		router.replace(cover: .onboarding)
+		router.handleDeepLink(url: try #require(URL(string: "myapp://cover/player/photos")))
+		await router.pendingCoverTask?.value
+
+		#expect(router.presentedFullscreenCover == FullscreenCoverPresentation(cover: .player, stack: [.photos]))
+		#expect(router.pendingFullscreenCover == nil)
+	}
+
+	@Test("Replacing twice before the handoff presents only the latest replacement")
+	func replaceTwiceKeepsLatest() async {
+		let router = TestRouter(initialTab: .home)
+		router.present(cover: .player)
+
+		router.replace(cover: .onboarding)
+		router.replace(cover: .player)
+
+		#expect(router.pendingFullscreenCover == .player)
+
+		await router.pendingCoverTask?.value
+
+		#expect(router.presentedFullscreenCover?.cover == .player)
 	}
 
 	@Test("Dismissing cancels a queued replacement")
-	func dismissClearsPendingCover() {
+	func dismissClearsPendingCover() async throws {
 		let router = TestRouter(initialTab: .home)
-		router.present(fullscreenCover: .player)
-		router.replace(fullscreenCover: .onboarding)
+		router.present(cover: .player)
+		router.replace(cover: .onboarding)
+		let task = try #require(router.pendingCoverTask)
 
-		router.dismissFullscreenCover()
+		router.dismiss(.cover)
+		await task.value
 
 		#expect(router.pendingFullscreenCover == nil)
 		#expect(router.presentedFullscreenCover == nil)
+		#expect(router.pendingCoverTask == nil)
 	}
 }

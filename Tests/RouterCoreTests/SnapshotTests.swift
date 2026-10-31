@@ -22,11 +22,11 @@ struct SnapshotTests {
 	func snapshotCapturesState() {
 		let router = TestRouter(initialTab: .home)
 		router.navigate(to: .photos, .friend(id: 1))
-		router.navigate(to: .settings, in: .profile)
+		router.navigate(to: .settings, in: .tab(.profile))
 		router.present(sheet: .checkout)
-		router.navigateInSheet(to: .photos)
-		router.present(fullscreenCover: .player)
-		router.replace(fullscreenCover: .onboarding)
+		router.navigate(to: .photos, in: .sheet)
+		router.present(cover: .player)
+		router.replace(cover: .onboarding)
 
 		#expect(router.snapshot == TestRouter.Snapshot(
 			selectedTab: .home,
@@ -54,10 +54,10 @@ struct SnapshotTests {
 	func restoreReplacesEverything() {
 		let router = TestRouter(initialTab: .home)
 		router.navigate(to: .photos)
-		router.navigate(to: .friend(id: 2), in: .settings)
+		router.navigate(to: .friend(id: 2), in: .tab(.settings))
 		router.present(sheet: .login)
-		router.present(fullscreenCover: .player)
-		router.replace(fullscreenCover: .onboarding)
+		router.present(cover: .player)
+		router.replace(cover: .onboarding)
 		let target = TestRouter.Snapshot(
 			selectedTab: .profile,
 			paths: [.profile: [.settings]],
@@ -102,14 +102,14 @@ struct SnapshotTests {
 	@Test("JSON encoding is byte-stable regardless of how the state was built")
 	func jsonIsStable() throws {
 		let forward = TestRouter(initialTab: .home)
-		forward.navigate(to: .photos, in: .home)
-		forward.navigate(to: .settings, in: .profile)
-		forward.navigate(to: .friend(id: 3), in: .settings)
+		forward.navigate(to: .photos, in: .tab(.home))
+		forward.navigate(to: .settings, in: .tab(.profile))
+		forward.navigate(to: .friend(id: 3), in: .tab(.settings))
 
 		let backward = TestRouter(initialTab: .home)
-		backward.navigate(to: .friend(id: 3), in: .settings)
-		backward.navigate(to: .settings, in: .profile)
-		backward.navigate(to: .photos, in: .home)
+		backward.navigate(to: .friend(id: 3), in: .tab(.settings))
+		backward.navigate(to: .settings, in: .tab(.profile))
+		backward.navigate(to: .photos, in: .tab(.home))
 
 		#expect(try encode(forward.snapshot) == encode(backward.snapshot))
 		for snapshot in StateGenerator.snapshots(count: 50) {

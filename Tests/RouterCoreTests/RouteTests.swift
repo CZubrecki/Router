@@ -14,7 +14,7 @@ struct RouteTests {
 		let router = TestRouter(initialTab: .home)
 		#expect(router.currentRoute == "home")
 
-		router.navigate(to: .friend(id: 42), .photos, in: .profile)
+		router.navigate(to: .friend(id: 42), .photos, in: .tab(.profile))
 		router.switchTab(to: .profile)
 
 		#expect(router.currentRoute == "profile/friend/42/photos")
@@ -28,7 +28,7 @@ struct RouteTests {
 
 		#expect(router.currentRoute == "sheet/checkout")
 
-		router.navigateInSheet(to: .settings)
+		router.navigate(to: .settings, in: .sheet)
 
 		#expect(router.currentRoute == "sheet/checkout/settings")
 	}
@@ -37,8 +37,8 @@ struct RouteTests {
 	func coverRoute() {
 		let router = TestRouter(initialTab: .home)
 		router.present(sheet: .checkout)
-		router.present(fullscreenCover: .onboarding)
-		router.navigateInFullscreenCover(to: .friend(id: 7))
+		router.present(cover: .onboarding)
+		router.navigate(to: .friend(id: 7), in: .cover)
 
 		#expect(router.currentRoute == "cover/onboarding/friend/7")
 	}
@@ -48,7 +48,7 @@ struct RouteTests {
 		let router = PlainModalRouter(initialTab: .settings)
 		router.navigate(to: .photos)
 		router.present(sheet: .only)
-		router.present(fullscreenCover: .only)
+		router.present(cover: .only)
 
 		#expect(router.currentRoute == "settings/photos")
 	}

@@ -39,7 +39,7 @@ Add the package with Swift Package Manager:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/CZubrecki/Router.git", .upToNextMinor(from: "0.4.0")),
+    .package(url: "https://github.com/CZubrecki/Router.git", .upToNextMinor(from: "0.5.0")),
 ]
 ```
 
@@ -86,57 +86,54 @@ Conform the four enums to it when you want snapshots to be `Codable` too.
 
 ## Driving navigation
 
-All mutations go through the router:
+Every stack operation takes a `Context` saying which stack to act on.
+It defaults to the selected tab, so most calls don't mention it:
+
+```swift
+public enum Context: Hashable, Sendable {
+    case tab(Tab)        // a specific tab
+    case currentTab      // whichever tab is selected when the call runs (the default)
+    case sheet           // the presented sheet's stack
+    case cover           // the presented full-screen cover's stack
+}
+```
 
 ```swift
 let router = AppRouter(initialTab: .home)
 
-// Push onto the current tab's stack
-router.navigate(to: .friend(id: 42))
+// Push
+router.navigate(to: .friend(id: 42))                     // selected tab
+router.navigate(to: .friend(id: 42), .settings)          // several at once
+router.navigate(to: .friend(id: 42), in: .tab(.profile)) // a specific tab
+router.navigate(to: .settings, in: .sheet)               // inside the presented sheet
 
-// Push onto a specific tab
-router.navigate(to: .friend(id: 42), in: .profile)
+// Pop
+router.pop()                                  // one level
+router.pop(3, in: .cover)                     // three levels inside the cover
+router.popTo(.friend(id: 42))                 // back to a destination
+router.popToRoot(in: .tab(.profile))          // all the way
+router.popAllToRoot()                         // every tab
 
-// Push several at once
-router.navigate(to: .friend(id: 42), .settings)
+// Replace a whole stack
+router.replaceStack([.friend(id: 42), .settings], in: .tab(.profile))
 
-// Switch tab + push in one call
-router.switchTab(to: .profile, navigatingTo: .friend(id: 42))
-
-// Reset a tab's stack
-router.switchTab(to: .profile, resetTo: .friend(id: 42), .settings)
-
-// Pop operations
-router.pop()                       // current tab, one level
-router.pop(3)                      // current tab, three levels
-router.popTo(.friend(id: 42))      // current tab, back to a destination
-router.popToRoot()                 // current tab, all the way
-router.popToRoot(in: .profile)     // a specific tab
-router.popAllToRoot()              // every tab
+// Tabs
+router.switchTab(to: .profile)
 ```
+
+Stack operations on `.sheet` or `.cover` do nothing when that modal isn't presented.
 
 ## Sheets and full-screen covers
 
 Presentation state is held alongside its own navigation stack so the two can't drift apart.
 
 ```swift
-// Present
 router.present(sheet: .login)
-router.present(fullscreenCover: .onboarding)
+router.present(cover: .onboarding)
+router.replace(cover: .signUp)       // swap covers safely, see below
 
-// Push inside a presented sheet / cover
-router.navigateInSheet(to: .friend(id: 42))
-router.navigateInFullscreenCover(to: .settings)
-
-// Pop inside
-router.popInSheet()
-router.popInFullscreenCover(2)
-router.popInSheetToRoot()
-router.popInFullscreenCoverToRoot()
-
-// Dismiss
-router.dismissSheet()
-router.dismissFullscreenCover()
+router.dismiss(.sheet)
+router.dismiss(.cover)
 ```
 
 Sheets and full-screen covers are **global** to the router.
@@ -209,7 +206,7 @@ Task {
 router.onEvent = { event in socket.send(.navigation(event)) }
 ```
 
-- Each router method emits exactly one event, with a few exceptions noted in their documentation: compound calls like `switchTab(to:resetTo:)` emit one event per part that changed, and `popAllToRoot()` emits one pop per tab.
+- Each router method emits exactly one event. The exception is `popAllToRoot()`, which emits one pop per tab it clears.
 - Calls that change nothing (popping an empty stack, pushing into a sheet that isn't presented) emit nothing.
 - Writes through SwiftUI bindings emit events too: a swipe-back is a `popped`, a tab tap is a `switchedTab`, a swipe-to-dismiss is a `dismissed`.
 - Contexts in events are concrete: `.currentTab` is reported as the `.tab(_)` it resolved to.
@@ -429,25 +426,21 @@ Both read as empty and discard writes when nothing is presented, so the binding 
 ## Swapping one cover for another
 
 SwiftUI drops the incoming presentation if you dismiss one full-screen cover and present another in the same update.
-`replace(fullscreenCover:)` handles the handoff: it dismisses the current cover and queues the replacement, which the host presents once dismissal finishes.
+`replace(cover:)` handles the handoff: it dismisses the current cover, queues the replacement in `pendingFullscreenCover`, and presents it itself on the next main-actor turn.
+The host needs nothing beyond the plain modifier:
 
 ```swift
 // From anywhere - e.g. a sign-up prompt inside an onboarding cover
-router.replace(fullscreenCover: .login)
+router.replace(cover: .login)
 
-// Drained by the host
+// Host
 .fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
     view(for: presentation.cover)
-} onDismiss: {
-    if let next = router.takePendingFullscreenCover() {
-        DispatchQueue.main.async { router.present(fullscreenCover: next) }
-    }
 }
 ```
 
-With nothing presented, `replace(fullscreenCover:)` presents immediately.
-Calling it again before the queue drains supersedes the queued cover.
-`dismissFullscreenCover()` cancels a queued replacement, so drain with `takePendingFullscreenCover()` rather than dismissing again.
+With nothing presented, `replace(cover:)` presents immediately.
+Calling it again before the handoff supersedes the queued cover, and `dismiss(.cover)` or presenting a cover directly cancels it.
 
 ## Native SwiftUI transitions (zoom, etc.)
 
@@ -569,10 +562,9 @@ struct RootView: View {
 - **Snapshots:** `snapshot`, `init(snapshot:)`, `restore(_:)`
 - **Events:** `events`, `onEvent`
 - **Routes:** `routeFormat`, `currentRoute`, `navigate(route:)`, `route(for:format:)`
-- **Tab navigation:** `navigate(to:)`, `navigate(to:in:)`, `switchTab(to:navigatingTo:)`, `switchTab(to:resetTo:)`
-- **Pop:** `pop(_:)`, `popTo(_:in:)`, `popToRoot(in:)`, `popAllToRoot()`
-- **Sheets:** `present(sheet:)`, `navigateInSheet(to:)`, `popInSheet(_:)`, `popInSheetToRoot()`, `dismissSheet()`
-- **Covers:** `present(fullscreenCover:)`, `replace(fullscreenCover:)`, `takePendingFullscreenCover()`, `navigateInFullscreenCover(to:)`, `popInFullscreenCover(_:)`, `popInFullscreenCoverToRoot()`, `dismissFullscreenCover()`
+- **Stacks:** `navigate(to:in:)`, `pop(_:in:)`, `popTo(_:in:)`, `popToRoot(in:)`, `replaceStack(_:in:)`, `popAllToRoot()`
+- **Tabs:** `switchTab(to:)`
+- **Modals:** `present(sheet:)`, `present(cover:)`, `replace(cover:)`, `dismiss(_:)`
 - **Deep links:** `handleDeepLink(url:treatHostAsPath:sheetPrefix:coverPrefix:)`
 - **SwiftUI (`RouterUI`):** `pathBinding(for:)`, `sheetPathBinding()`, `fullscreenCoverPathBinding()`, `View.onOpenURL(with:)`
 
@@ -603,8 +595,7 @@ Pin with `.upToNextMinor(from:)` until 1.0.
 
 ## Roadmap
 
-- **0.5**: a smaller API built on a `Context` parameter, and cover replacement handled inside the router.
-- **1.0**: deprecated 0.x names removed.
+- **1.0**: the deprecated 0.2 names are removed and `.upToNextMajor` becomes the recommended pin.
 - **Later**: first-class iPad and macOS layouts (`NavigationSplitView`, multi-window scenes).
 
 Out of scope: Combine APIs, and view-layer concerns like detents, transitions, and sheet sizing, which stay at the call site.
