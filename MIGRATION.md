@@ -56,3 +56,46 @@ extension AppTab: TabPresentable {   // in the UI layer
 
 Conform the four routing enums to `Codable` to make `Router.Snapshot` `Codable`.
 Apps that don't conform see no change.
+
+## 0.3 → 0.4: events, routes, and deep-link errors
+
+Everything is additive except one behaviour change.
+
+### Behaviour change: unknown path components are an error
+
+0.3 skipped path components no destination recognised, so `myapp://home/typo/photos` landed on `[.photos]`.
+0.4 rejects the whole link with `.unconsumedComponents(["typo", "photos"])` and leaves the router unchanged.
+
+`handleDeepLink(url:)` now returns `Result<Void, DeepLinkError>` (marked `@discardableResult`, so existing calls still compile).
+To keep the old lenient behaviour for a specific case, make the destination parser claim the components it should ignore.
+For example, consume an unknown trailing component instead of returning `nil`:
+
+```swift
+static func destination(consuming components: ArraySlice<String>, parameters: [String: String])
+    -> (destination: AppDestination, consumed: Int)? {
+    switch components.first {
+    case "photos": return (.photos, 1)
+    default: return nil   // 0.4: rejects the link. Return a fallback destination to accept it.
+    }
+}
+```
+
+### New requirement: map values back to paths
+
+Routes now render in both directions, so each `URLRoutable*` protocol gains a reverse mapping:
+
+| Protocol                     | New requirement                  |
+|------------------------------|----------------------------------|
+| `URLRoutableTab`             | `var path: String`               |
+| `URLRoutableSheet`           | `var path: String`               |
+| `URLRoutableFullScreenCover` | `var path: String`               |
+| `URLRoutableDestination`     | `var pathComponents: [String]`   |
+
+Enums with `String` raw values get `path` (and the `from:` lookups) for free.
+Destinations implement `pathComponents` as the inverse of `destination(consuming:parameters:)`.
+
+### New API
+
+- `router.events` (`AsyncStream<NavigationEvent>`) and `router.onEvent`.
+- `router.currentRoute`, `router.navigate(route:)`, `Router.route(for:format:)`, and `router.routeFormat`.
+- `handleDeepLink`'s `sheetPrefix` and `coverPrefix` now default to `router.routeFormat`'s values.

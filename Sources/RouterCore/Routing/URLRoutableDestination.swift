@@ -1,7 +1,7 @@
 /// A destination that can be reconstructed from URL path components.
 ///
 /// Conform when you want the router to handle deep links via
-/// `Router.handleDeepLink(url:)`.
+/// `Router.handleDeepLink(url:)` and render ``Router/currentRoute``.
 ///
 /// The protocol uses a "consume" model: each call inspects the leading path components and
 /// reports both the destination it constructed *and* how many components it consumed. This
@@ -33,6 +33,14 @@
 ///         default:         return nil
 ///         }
 ///     }
+///
+///     var pathComponents: [String] {
+///         switch self {
+///         case .friend(let id): ["friend", String(id)]
+///         case .photos:         ["photos"]
+///         case .settings:       ["settings"]
+///         }
+///     }
 /// }
 /// ```
 public protocol URLRoutableDestination: RouterDestination {
@@ -43,9 +51,13 @@ public protocol URLRoutableDestination: RouterDestination {
 	///     component at index `startIndex`.
 	///   - parameters: The URL's query parameters, keyed by name.
 	/// - Returns: The destination and the number of components it consumed, or `nil` if no
-	///   destination matches the leading components.
+	///   destination matches the leading components. `consumed` must be at least 1.
 	static func destination(
 		consuming pathComponents: ArraySlice<String>,
 		parameters: [String: String]
 	) -> (destination: Self, consumed: Int)?
+
+	/// The path components that render this destination. Passing them to
+	/// ``destination(consuming:parameters:)`` must return `self` and consume all of them.
+	var pathComponents: [String] { get }
 }

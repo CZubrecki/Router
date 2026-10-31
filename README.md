@@ -21,6 +21,8 @@ Router ships as two libraries:
 - **Single source of truth** for tab selection, per-tab navigation stacks, and presented sheets and covers.
 - **Bundled presentation state**: sheets and covers carry their own navigation stacks, so they can't drift out of sync with their presentation identity.
 - **Snapshots**: the whole router is a `Codable`, `Equatable` value you can persist, print, diff, and restore.
+- **Events**: every state change is reported as a `NavigationEvent`, through an `AsyncStream` or a synchronous handler.
+- **Two-way routes**: deep links parse into state, `currentRoute` renders state back into a route, and rejected links say why.
 - **Deep linking** via opt-in `URLRoutable*` protocols, with sheet and cover deep links supported through reserved URL prefixes.
 - **Headless**: `RouterCore` has no SwiftUI dependency and runs under `swift test` on macOS.
 - **`@MainActor`-isolated** for correct concurrency.
@@ -37,7 +39,7 @@ Add the package with Swift Package Manager:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/CZubrecki/Router.git", .upToNextMinor(from: "0.3.0")),
+    .package(url: "https://github.com/CZubrecki/Router.git", .upToNextMinor(from: "0.4.0")),
 ]
 ```
 
@@ -177,17 +179,60 @@ Empty stacks are left out, so a tab popped back to its root equals one that was 
 Where and when to save a snapshot (`SceneStorage`, a file, a test fixture) is up to the app.
 See [Restoring navigation on launch](#restoring-navigation-on-launch) for a `SceneStorage` example.
 
+## Events
+
+Every change to the router's state is reported as a `NavigationEvent`, delivered after the change so a handler that reads `router.snapshot` sees the new state.
+
+```swift
+public enum NavigationEvent: Hashable, Sendable {
+    case switchedTab(from: Tab, to: Tab)
+    case pushed([Destination], in: Context)
+    case popped(count: Int, in: Context)
+    case stackReplaced([Destination], in: Context)
+    case presented(Presentation)          // .sheet(Sheet) | .cover(FullscreenCover)
+    case dismissed(Presentation)
+    case deepLinkHandled(URL)
+    case deepLinkRejected(URL, DeepLinkError)
+    case restored
+}
+```
+
+Subscribe with an `AsyncStream`, or set a synchronous handler for a debug socket or analytics bridge:
+
+```swift
+Task {
+    for await event in router.events {
+        print(event)
+    }
+}
+
+router.onEvent = { event in socket.send(.navigation(event)) }
+```
+
+- Each router method emits exactly one event, with a few exceptions noted in their documentation: compound calls like `switchTab(to:resetTo:)` emit one event per part that changed, and `popAllToRoot()` emits one pop per tab.
+- Calls that change nothing (popping an empty stack, pushing into a sheet that isn't presented) emit nothing.
+- Writes through SwiftUI bindings emit events too: a swipe-back is a `popped`, a tab tap is a `switchedTab`, a swipe-to-dismiss is a `dismissed`.
+- Contexts in events are concrete: `.currentTab` is reported as the `.tab(_)` it resolved to.
+- Nothing is built while no stream or handler is attached, so release builds pay nothing.
+
+Mapping navigation events to analytics events is the app's job; Router never learns about any one app.
+
 ## Deep linking
 
 Conform your tab, destination, sheet, and cover types to the corresponding `URLRoutable*` protocols.
+Each protocol maps a path to a value and back.
 Sheet and cover conformance is optional; the router checks for it at runtime.
 
+Enums with `String` raw values get `tab(from:)`, `sheet(from:)`, `cover(from:)`, and `path` for free:
+
 ```swift
-extension AppTab: URLRoutableTab {
-    static func tab(from path: String) -> AppTab? {
-        AppTab(rawValue: path)
-    }
-}
+extension AppTab: URLRoutableTab { }
+extension AppSheet: URLRoutableSheet { }
+```
+
+Destinations spell out both directions, since one destination can span several components:
+
+```swift
 
 extension AppDestination: URLRoutableDestination {
     static func destination(
@@ -205,11 +250,12 @@ extension AppDestination: URLRoutableDestination {
             return nil
         }
     }
-}
 
-extension AppSheet: URLRoutableSheet {
-    static func sheet(from path: String) -> AppSheet? {
-        AppSheet(rawValue: path)
+    var pathComponents: [String] {
+        switch self {
+        case .friend(let id): ["friend", String(id)]
+        case .settings:       ["settings"]
+        }
     }
 }
 ```
@@ -224,31 +270,73 @@ URL conventions:
 | `myapp://cover/onboarding`                | Present cover `.onboarding`                             |
 
 The matched stack is *replaced* with the parsed destinations.
-The `sheet` and `cover` prefixes are reserved by default; both are configurable on `handleDeepLink(url:treatHostAsPath:sheetPrefix:coverPrefix:)`.
+The `sheet` and `cover` prefixes are reserved by default; change them with `router.routeFormat` or per call on `handleDeepLink(url:treatHostAsPath:sheetPrefix:coverPrefix:)`.
 
 For universal links (`https://example.com/...`), pass `treatHostAsPath: false` so the host (your domain) isn't treated as the first route component.
 
+### Rejected links
+
+`handleDeepLink(url:)` returns `Result<Void, DeepLinkError>`.
+A rejected link leaves the router unchanged.
+
+| Error                         | Cause                                                           |
+|-------------------------------|-----------------------------------------------------------------|
+| `.unknownTab(String)`         | The first component names no tab.                               |
+| `.unknownSheet(String)`       | The component after the sheet prefix names no sheet.            |
+| `.unknownCover(String)`       | The component after the cover prefix names no cover.            |
+| `.unconsumedComponents([String])` | No destination claimed these trailing components.           |
+| `.malformedURL`               | No route at all, or a modal prefix with nothing after it.       |
+
+Every component must be claimed.
+Unrecognised components are an error rather than being skipped, so a typo in a route can't silently land somewhere else.
+
+## Routes
+
+A route is a URL without its scheme: `profile/friend/42`, `sheet/checkout/payment`, `cover/onboarding`.
+`currentRoute` renders where the router is now, and `navigate(route:)` goes to a route:
+
+```swift
+router.routeFormat = RouteFormat(scheme: "myapp")   // prefixes default to "sheet" and "cover"
+
+router.currentRoute                                  // "profile/friend/42"
+
+switch router.navigate(route: "sheet/login") {
+case .success: print(router.currentRoute)
+case .failure(let error): print("rejected:", error)
+}
+```
+
+The current location is the presented cover if any, else the presented sheet, else the selected tab, each followed by its stack.
+`Router.route(for: snapshot)` renders a snapshot without a live router and can be called from any actor.
+Following `currentRoute` always leaves the router's snapshot unchanged.
+Routes use path components only; query parameters are still parsed, and reserved for optional modifiers.
+
 ## Running headless
 
-Because `RouterCore` builds for macOS without SwiftUI, a command-line tool or test can load a state, drive it, and print the result with no simulator:
+Because `RouterCore` builds for macOS without SwiftUI, a command-line tool or test can load a state, drive it by route, observe what changed, and print the result with no simulator:
 
 ```swift
 import Foundation
 import RouterCore
 
 let router = AppRouter(initialTab: .home)
-
-// Load a fixture
-let fixture = try JSONDecoder().decode(AppRouter.Snapshot.self, from: Data(contentsOf: fixtureURL))
-router.restore(fixture)
-
-// Drive it
-router.handleDeepLink(url: URL(string: "myapp://profile/friend/42")!)
-
-// Print the state
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.sortedKeys]
+
+// app state
 print(String(decoding: try encoder.encode(router.snapshot), as: UTF8.self))
+
+// app navigate profile/friend/42
+switch router.navigate(route: arguments[0]) {
+case .success: print(router.currentRoute)
+case .failure(let error): fail(error)
+}
+
+// app scenario sunday  (the fixture includes a snapshot)
+router.restore(fixture.navigation)
+
+// debug socket
+router.onEvent = { socket.send(.navigation($0)) }
 ```
 
 # UI
@@ -479,6 +567,8 @@ struct RootView: View {
 
 - **State:** `selectedTab`, `subscript(tab:)`, `currentPath`, `presentedSheet`, `presentedFullscreenCover`, `pendingFullscreenCover`
 - **Snapshots:** `snapshot`, `init(snapshot:)`, `restore(_:)`
+- **Events:** `events`, `onEvent`
+- **Routes:** `routeFormat`, `currentRoute`, `navigate(route:)`, `route(for:format:)`
 - **Tab navigation:** `navigate(to:)`, `navigate(to:in:)`, `switchTab(to:navigatingTo:)`, `switchTab(to:resetTo:)`
 - **Pop:** `pop(_:)`, `popTo(_:in:)`, `popToRoot(in:)`, `popAllToRoot()`
 - **Sheets:** `present(sheet:)`, `navigateInSheet(to:)`, `popInSheet(_:)`, `popInSheetToRoot()`, `dismissSheet()`
@@ -513,7 +603,6 @@ Pin with `.upToNextMinor(from:)` until 1.0.
 
 ## Roadmap
 
-- **0.4**: a navigation event stream, two-way routes (`currentRoute`, `navigate(route:)`), and explicit deep-link errors.
 - **0.5**: a smaller API built on a `Context` parameter, and cover replacement handled inside the router.
 - **1.0**: deprecated 0.x names removed.
 - **Later**: first-class iPad and macOS layouts (`NavigationSplitView`, multi-window scenes).

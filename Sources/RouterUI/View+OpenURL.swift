@@ -4,7 +4,8 @@ import SwiftUI
 public extension View {
 	/// Routes incoming URLs through the given router.
 	///
-	/// Convenience wrapper around `.onOpenURL { router.handleDeepLink(url: $0) }`.
+	/// Convenience wrapper around `.onOpenURL { router.handleDeepLink(url: $0) }`. Rejected links
+	/// leave the router unchanged and are reported through the router's events.
 	///
 	/// ## Example
 	///

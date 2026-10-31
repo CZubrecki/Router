@@ -28,10 +28,30 @@
 ///         default:         return nil
 ///         }
 ///     }
+///
+///     var path: String {
+///         switch self {
+///         case .login:    "login"
+///         case .checkout: "checkout"
+///         }
+///     }
 /// }
 /// ```
 public protocol URLRoutableSheet: RouterSheet {
 	/// Returns the sheet that corresponds to a URL path component, or `nil` if no sheet matches.
 	/// - Parameter path: The path component following the sheet prefix (e.g. `"checkout"`).
 	static func sheet(from path: String) -> Self?
+
+	/// The path component that names this sheet. ``sheet(from:)`` must map it back to `self`.
+	var path: String { get }
+}
+
+public extension URLRoutableSheet where Self: RawRepresentable, RawValue == String {
+	static func sheet(from path: String) -> Self? {
+		Self(rawValue: path)
+	}
+
+	var path: String {
+		rawValue
+	}
 }
