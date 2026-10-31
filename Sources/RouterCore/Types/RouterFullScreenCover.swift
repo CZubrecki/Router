@@ -31,7 +31,7 @@ public protocol RouterFullScreenCover: Hashable, Sendable { }
 public struct FullscreenCoverPresentation<
 	FullscreenCover: RouterFullScreenCover,
 	Destination: RouterDestination,
->: Identifiable, Sendable {
+>: Identifiable, Hashable, Sendable {
 	/// The identity of the presented cover.
 	public let cover: FullscreenCover
 
@@ -51,3 +51,5 @@ public struct FullscreenCoverPresentation<
 	}
 }
 
+extension FullscreenCoverPresentation: Codable
+where FullscreenCover: Codable, Destination: Codable { }

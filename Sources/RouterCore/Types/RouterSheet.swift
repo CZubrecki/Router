@@ -31,7 +31,7 @@ public protocol RouterSheet: Hashable, Sendable { }
 public struct SheetPresentation<
 	Sheet: RouterSheet,
 	Destination: RouterDestination,
->: Identifiable, Sendable {
+>: Identifiable, Hashable, Sendable {
 	/// The identity of the presented sheet.
 	public let sheet: Sheet
 
@@ -51,3 +51,4 @@ public struct SheetPresentation<
 	}
 }
 
+extension SheetPresentation: Codable where Sheet: Codable, Destination: Codable { }

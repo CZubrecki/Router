@@ -1,26 +1,24 @@
+import RouterCore
 import SwiftUI
 
 /// The image source for a tab's tab-bar item.
-public enum TabImage: Sendable {
+public enum TabImage: Hashable, Sendable {
 	/// An SF Symbol name resolved with `Image(systemName:)`.
 	case systemImage(String)
 	/// An asset-catalog image name resolved with `Image(_:)`.
 	case asset(String)
 }
 
-/// A value that identifies a tab the router manages.
+/// A tab that carries the details needed to draw its tab-bar item.
 ///
-/// Conform a `Hashable` enum (or struct) to `RouterTab` to describe every tab in the app.
-///
-/// All three properties have protocol-extension defaults of `nil`, so you only implement what
-/// each tab actually needs.
+/// Kept apart from `RouterTab` so tab enums can live in packages that never import SwiftUI.
+/// Declare the conformance in the UI layer. All three properties default to `nil`, so you only
+/// implement what each tab actually needs.
 ///
 /// ## Example
 ///
 /// ```swift
-/// enum AppTab: Hashable, Sendable, RouterTab {
-///     case home, profile, search, settings
-///
+/// extension AppTab: TabPresentable {
 ///     var title: LocalizedStringKey? {
 ///         switch self {
 ///         case .home:     "Home"
@@ -44,7 +42,8 @@ public enum TabImage: Sendable {
 ///     }
 /// }
 /// ```
-public protocol RouterTab: Hashable, Sendable {
+@available(macOS 15, *)
+public protocol TabPresentable: RouterTab {
 	/// The tab's display title. Return `nil` to defer to the tab's `role` for a default title.
 	var title: LocalizedStringKey? { get }
 
@@ -56,7 +55,8 @@ public protocol RouterTab: Hashable, Sendable {
 	var role: TabRole? { get }
 }
 
-public extension RouterTab {
+@available(macOS 15, *)
+public extension TabPresentable {
 	var title: LocalizedStringKey? { nil }
 	var image: TabImage? { nil }
 	var role: TabRole? { nil }

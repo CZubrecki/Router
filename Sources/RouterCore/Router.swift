@@ -1,10 +1,12 @@
+import Foundation
 import Observation
-import SwiftUI
 
 /// A source of truth for tab selection, navigation stacks, and modal presentation.
 ///
 /// `Router` is observable and main-actor-isolated. Create one instance per app and share it
-/// through the SwiftUI environment.
+/// through the SwiftUI environment. The class lives in `RouterCore`, which imports only
+/// Foundation and Observation, so it also runs headless on macOS (tests, CLIs). The SwiftUI
+/// bindings used below come from `RouterUI`.
 ///
 /// ## Usage
 ///
@@ -73,6 +75,37 @@ public final class Router<
 		selectedTab = initialTab
 	}
 
+	/// Creates a router in the state captured by a snapshot.
+	/// - Parameter snapshot: The state to start from.
+	public convenience init(snapshot: Snapshot) {
+		self.init(initialTab: snapshot.selectedTab)
+		restore(snapshot)
+	}
+
+	/// The router's entire navigation state as a value.
+	///
+	/// Encode it (when the routing types are `Codable`) to persist state, print it from a CLI, or
+	/// compare it in tests.
+	public var snapshot: Snapshot {
+		Snapshot(
+			selectedTab: selectedTab,
+			paths: paths,
+			presentedSheet: presentedSheet,
+			presentedFullscreenCover: presentedFullscreenCover,
+			pendingFullscreenCover: pendingFullscreenCover,
+		)
+	}
+
+	/// Replaces the router's entire navigation state with a snapshot's.
+	/// - Parameter snapshot: The state to apply.
+	public func restore(_ snapshot: Snapshot) {
+		selectedTab = snapshot.selectedTab
+		paths = snapshot.paths
+		presentedSheet = snapshot.presentedSheet
+		presentedFullscreenCover = snapshot.presentedFullscreenCover
+		pendingFullscreenCover = snapshot.pendingFullscreenCover
+	}
+
 	/// Accesses the navigation stack for a tab.
 	///
 	/// Reads return an empty array when no destinations have been pushed onto the tab yet.
@@ -89,42 +122,6 @@ public final class Router<
 	public var currentPath: [Destination] {
 		get { paths[selectedTab, default: []] }
 		set { paths[selectedTab] = newValue }
-	}
-
-	/// Returns a two-way binding to a tab's navigation stack, suitable for `NavigationStack(path:)`.
-	/// - Parameter tab: The tab whose stack should be bound.
-	/// - Returns: A binding that reads from and writes to the tab's stack.
-	public func pathBinding(for tab: Tab) -> Binding<[Destination]> {
-		Binding(
-			get: { self[tab] },
-			set: { self[tab] = $0 },
-		)
-	}
-
-	/// Returns a two-way binding to the presented sheet's navigation stack, suitable for a
-	/// `NavigationStack(path:)` inside the sheet.
-	///
-	/// Reads return an empty array when no sheet is presented, and writes are discarded, so the
-	/// binding is safe to build before anything is presented.
-	/// - Returns: A binding that reads from and writes to the presented sheet's stack.
-	public func sheetPathBinding() -> Binding<[Destination]> {
-		Binding(
-			get: { self.presentedSheet?.stack ?? [] },
-			set: { self.presentedSheet?.stack = $0 },
-		)
-	}
-
-	/// Returns a two-way binding to the presented full-screen cover's navigation stack, suitable
-	/// for a `NavigationStack(path:)` inside the cover.
-	///
-	/// Reads return an empty array when no cover is presented, and writes are discarded, so the
-	/// binding is safe to build before anything is presented.
-	/// - Returns: A binding that reads from and writes to the presented cover's stack.
-	public func fullscreenCoverPathBinding() -> Binding<[Destination]> {
-		Binding(
-			get: { self.presentedFullscreenCover?.stack ?? [] },
-			set: { self.presentedFullscreenCover?.stack = $0 },
-		)
 	}
 
 	/// Pushes a destination onto the currently selected tab's navigation stack.

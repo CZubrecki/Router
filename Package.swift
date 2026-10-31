@@ -5,20 +5,32 @@ import PackageDescription
 
 let package = Package(
     name: "Router",
-	platforms: [.iOS(.v18)],
+	platforms: [.iOS(.v18), .macOS(.v14)],
     products: [
         .library(
-            name: "Router",
-            targets: ["Router"]
+            name: "RouterCore",
+            targets: ["RouterCore"]
+        ),
+        .library(
+            name: "RouterUI",
+            targets: ["RouterUI"]
         ),
     ],
     targets: [
         .target(
-            name: "Router"
+            name: "RouterCore"
+        ),
+        .target(
+            name: "RouterUI",
+            dependencies: ["RouterCore"]
         ),
         .testTarget(
-            name: "RouterTests",
-            dependencies: ["Router"]
+            name: "RouterCoreTests",
+            dependencies: ["RouterCore"]
+        ),
+        .testTarget(
+            name: "RouterUITests",
+            dependencies: ["RouterUI"]
         ),
     ],
     swiftLanguageModes: [.v6]

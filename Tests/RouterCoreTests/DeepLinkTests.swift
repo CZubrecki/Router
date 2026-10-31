@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import Router
+@testable import RouterCore
 
 @MainActor
 @Suite("Deep linking")

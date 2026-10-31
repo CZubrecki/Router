@@ -1,5 +1,5 @@
 import Testing
-@testable import Router
+@testable import RouterCore
 
 @MainActor
 @Suite("Sheet and full-screen cover presentation")
@@ -104,52 +104,6 @@ struct ModalPresentationTests {
 		#expect(router.currentPath == [.photos])
 	}
 
-	// MARK: - Sheet path binding
-
-	@Test("The sheet path binding reads empty and swallows writes when nothing is presented")
-	func sheetPathBindingWithoutPresentation() {
-		let router = TestRouter(initialTab: .home)
-		let binding = router.sheetPathBinding()
-
-		#expect(binding.wrappedValue.isEmpty)
-
-		binding.wrappedValue = [.photos]
-
-		#expect(router.presentedSheet == nil)
-		#expect(binding.wrappedValue.isEmpty)
-	}
-
-	@Test("The sheet path binding reads and writes the presented sheet's stack")
-	func sheetPathBinding() {
-		let router = TestRouter(initialTab: .home)
-		let binding = router.sheetPathBinding()
-		router.present(sheet: .checkout)
-
-		router.navigateInSheet(to: .photos)
-
-		#expect(binding.wrappedValue == [.photos])
-
-		binding.wrappedValue = [.settings, .friend(id: 4)]
-
-		#expect(router.presentedSheet?.stack == [.settings, .friend(id: 4)])
-		#expect(router.presentedSheet?.sheet == .checkout)
-	}
-
-	@Test("A sheet path binding built before presentation still tracks the sheet")
-	func sheetPathBindingOutlivesPresentation() {
-		let router = TestRouter(initialTab: .home)
-		let binding = router.sheetPathBinding()
-
-		router.present(sheet: .login)
-		binding.wrappedValue = [.photos]
-
-		#expect(router.presentedSheet?.stack == [.photos])
-
-		router.dismissSheet()
-
-		#expect(binding.wrappedValue.isEmpty)
-	}
-
 	// MARK: - Covers
 
 	@Test("Presenting a cover stores it with an empty stack")
@@ -222,37 +176,6 @@ struct ModalPresentationTests {
 
 		#expect(router.presentedSheet?.stack == [.photos])
 		#expect(router.presentedFullscreenCover?.stack == [.settings])
-	}
-
-	// MARK: - Cover path binding
-
-	@Test("The cover path binding reads empty and swallows writes when nothing is presented")
-	func coverPathBindingWithoutPresentation() {
-		let router = TestRouter(initialTab: .home)
-		let binding = router.fullscreenCoverPathBinding()
-
-		#expect(binding.wrappedValue.isEmpty)
-
-		binding.wrappedValue = [.photos]
-
-		#expect(router.presentedFullscreenCover == nil)
-		#expect(binding.wrappedValue.isEmpty)
-	}
-
-	@Test("The cover path binding reads and writes the presented cover's stack")
-	func coverPathBinding() {
-		let router = TestRouter(initialTab: .home)
-		let binding = router.fullscreenCoverPathBinding()
-		router.present(fullscreenCover: .player)
-
-		router.navigateInFullscreenCover(to: .photos)
-
-		#expect(binding.wrappedValue == [.photos])
-
-		binding.wrappedValue = [.settings, .friend(id: 6)]
-
-		#expect(router.presentedFullscreenCover?.stack == [.settings, .friend(id: 6)])
-		#expect(router.presentedFullscreenCover?.cover == .player)
 	}
 
 	// MARK: - Cover replacement
