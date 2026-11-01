@@ -569,9 +569,9 @@ struct RootView: View {
 - **Routes:** `routeFormat`, `currentRoute`, `navigate(route:)`, `route(for:format:)`
 - **Stacks:** `navigate(to:in:)`, `pop(_:in:)`, `popTo(_:in:)`, `popToRoot(in:)`, `replaceStack(_:in:)`, `popAllToRoot()`
 - **Tabs:** `switchTab(to:)`
-- **Modals:** `present(sheet:)`, `present(cover:)`, `replace(cover:)`, `dismiss(_:)`
+- **Modals:** `present(sheet:)`, `present(cover:)`, `replace(cover:)`, `dismiss(_:)`, `coverDidAppear()`, `coverDidDismiss()`
 - **Deep links:** `handleDeepLink(url:treatHostAsPath:sheetPrefix:coverPrefix:)`
-- **SwiftUI (`RouterUI`):** `pathBinding(for:)`, `sheetPathBinding()`, `fullscreenCoverPathBinding()`, `View.onOpenURL(with:)`
+- **SwiftUI (`RouterUI`):** `pathBinding(for:)`, `sheetPathBinding()`, `fullscreenCoverPathBinding()`, `View.fullScreenCover(router:onDismiss:content:)`, `View.onOpenURL(with:)`
 
 ## Development
 
