@@ -1,5 +1,6 @@
 # Migrating Router
 
+This file maps every API change from 0.2 to 1.0.
 Each section lists what changed in one release and the mechanical edit that ports an app to it.
 Apply them in order when skipping releases.
 
@@ -154,3 +155,10 @@ Delete the `onDismiss` handler that drained the queue:
 ```
 
 `takePendingFullscreenCover()` is a deprecated no-op that returns `nil`, so an un-migrated handler does nothing rather than presenting twice.
+
+## 0.5 → 1.0: deprecated names removed
+
+The deprecated 0.2 names listed in the 0.5 table are gone, along with `takePendingFullscreenCover()`.
+Fix any remaining deprecation warnings on 0.5 first; once a project builds warning-free on 0.5, it builds on 1.0 unchanged.
+
+Pin with `.upToNextMajor(from: "1.0.0")`.
