@@ -99,3 +99,58 @@ Destinations implement `pathComponents` as the inverse of `destination(consuming
 - `router.events` (`AsyncStream<NavigationEvent>`) and `router.onEvent`.
 - `router.currentRoute`, `router.navigate(route:)`, `Router.route(for:format:)`, and `router.routeFormat`.
 - `handleDeepLink`'s `sheetPrefix` and `coverPrefix` now default to `router.routeFormat`'s values.
+
+## 0.4 → 0.5: one set of verbs behind `Context`
+
+The tab, sheet, and cover variants of each operation collapse into one verb that takes a `Context` (`.tab(_)`, `.currentTab`, `.sheet`, `.cover`), defaulting to the selected tab.
+Every 0.2 name still compiles as a deprecated wrapper with a fix-it message, and is removed in 1.0.
+Each wrapper is tested to produce the same state and events as its replacement.
+
+| 0.4                                               | 0.5                                                                  |
+|---------------------------------------------------|----------------------------------------------------------------------|
+| `navigate(to: .x)`                                | unchanged                                                            |
+| `navigate(to: .x, in: .profile)`                  | `navigate(to: .x, in: .tab(.profile))`                               |
+| `switchTab(to: .p, navigatingTo: .x)`             | `switchTab(to: .p)` then `navigate(to: .x, in: .tab(.p))`            |
+| `switchTab(to: .p, resetTo: .a, .b)`              | `switchTab(to: .p)` then `replaceStack([.a, .b], in: .tab(.p))`      |
+| `pop()`, `pop(3)`                                 | unchanged                                                            |
+| `popToRoot()`                                     | unchanged                                                            |
+| `popToRoot(in: .profile)`                         | `popToRoot(in: .tab(.profile))`                                      |
+| `popTo(.x, in: .profile)`                         | `popTo(.x, in: .tab(.profile))`                                      |
+| `navigateInSheet(to: .x)`                         | `navigate(to: .x, in: .sheet)`                                       |
+| `popInSheet(2)`                                   | `pop(2, in: .sheet)`                                                 |
+| `popInSheetToRoot()`                              | `popToRoot(in: .sheet)`                                              |
+| `dismissSheet()`                                  | `dismiss(.sheet)`                                                    |
+| `present(fullscreenCover: .c)`                    | `present(cover: .c)`                                                 |
+| `replace(fullscreenCover: .c)`                    | `replace(cover: .c)`                                                 |
+| `navigateInFullscreenCover(to: .x)`               | `navigate(to: .x, in: .cover)`                                       |
+| `popInFullscreenCover(2)`                         | `pop(2, in: .cover)`                                                 |
+| `popInFullscreenCoverToRoot()`                    | `popToRoot(in: .cover)`                                              |
+| `dismissFullscreenCover()`                        | `dismiss(.cover)`                                                    |
+| `takePendingFullscreenCover()`                    | delete the call; see below                                           |
+
+New: `replaceStack(_:in:)`, `switchTab(to:)` without extras, `dismiss(_:)`, and `Router.Modal`.
+
+If your `Tab` enum has a case named `tab`, `currentTab`, `sheet`, or `cover`, write `Context` values with the full type (`AppRouter.Context.sheet`) wherever the shorthand is ambiguous.
+
+### Cover replacement no longer needs host code
+
+`replace(cover:)` now presents the queued cover itself on the next main-actor turn.
+Delete the `onDismiss` handler that drained the queue:
+
+```swift
+// Before
+.fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
+    view(for: presentation.cover)
+} onDismiss: {
+    if let next = router.takePendingFullscreenCover() {
+        DispatchQueue.main.async { router.present(fullscreenCover: next) }
+    }
+}
+
+// After
+.fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
+    view(for: presentation.cover)
+}
+```
+
+`takePendingFullscreenCover()` is a deprecated no-op that returns `nil`, so an un-migrated handler does nothing rather than presenting twice.

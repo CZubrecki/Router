@@ -11,7 +11,7 @@
 /// }
 ///
 /// // Present:
-/// router.present(fullscreenCover: .onboarding)
+/// router.present(cover: .onboarding)
 ///
 /// // Resolve in your view tree:
 /// .fullScreenCover(item: $router.presentedFullscreenCover) { presentation in

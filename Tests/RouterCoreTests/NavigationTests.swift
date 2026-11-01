@@ -28,7 +28,7 @@ struct NavigationTests {
 	func navigateIntoOtherTab() {
 		let router = TestRouter(initialTab: .home)
 
-		router.navigate(to: .photos, in: .profile)
+		router.navigate(to: .photos, in: .tab(.profile))
 
 		#expect(router.selectedTab == .home)
 		#expect(router.currentPath.isEmpty)
@@ -57,25 +57,50 @@ struct NavigationTests {
 		#expect(router[.profile] == [.settings])
 	}
 
-	@Test("Switching tab can push in the same call")
-	func switchTabNavigatingTo() {
+	@Test("The default context follows the selected tab after a switch")
+	func currentTabFollowsSwitch() {
 		let router = TestRouter(initialTab: .home)
 
-		router.switchTab(to: .profile, navigatingTo: .friend(id: 1))
+		router.switchTab(to: .profile)
+		router.navigate(to: .friend(id: 1))
 
 		#expect(router.selectedTab == .profile)
 		#expect(router[.profile] == [.friend(id: 1)])
+		#expect(router[.home].isEmpty)
 	}
 
-	@Test("Resetting a tab replaces its stack rather than appending")
-	func switchTabResetTo() {
+	@Test("Replacing a stack installs it rather than appending")
+	func replaceStack() {
 		let router = TestRouter(initialTab: .home)
-		router.navigate(to: .photos, in: .profile)
+		router.navigate(to: .photos, in: .tab(.profile))
 
-		router.switchTab(to: .profile, resetTo: .settings, .friend(id: 3))
+		router.replaceStack([.settings, .friend(id: 3)], in: .tab(.profile))
 
-		#expect(router.selectedTab == .profile)
 		#expect(router[.profile] == [.settings, .friend(id: 3)])
+
+		router.replaceStack([.photos])
+
+		#expect(router.currentPath == [.photos])
+
+		router.replaceStack([])
+
+		#expect(router.currentPath.isEmpty)
+	}
+
+	@Test("Stack verbs reach into a presented sheet or cover and ignore absent ones")
+	func modalContexts() {
+		let router = TestRouter(initialTab: .home)
+		router.replaceStack([.photos], in: .sheet)
+		router.popTo(.photos, in: .cover)
+
+		#expect(router.snapshot == TestRouter.Snapshot(selectedTab: .home))
+
+		router.present(sheet: .checkout)
+		router.replaceStack([.photos, .settings, .friend(id: 1)], in: .sheet)
+		router.popTo(.settings, in: .sheet)
+
+		#expect(router.presentedSheet?.stack == [.photos, .settings])
+		#expect(router.currentPath.isEmpty)
 	}
 
 	@Test("Popping removes from the top")
@@ -145,14 +170,14 @@ struct NavigationTests {
 	func popToRoot() {
 		let router = TestRouter(initialTab: .home)
 		router.navigate(to: .photos, .settings)
-		router.navigate(to: .friend(id: 2), in: .profile)
+		router.navigate(to: .friend(id: 2), in: .tab(.profile))
 
 		router.popToRoot()
 
 		#expect(router.currentPath.isEmpty)
 		#expect(router[.profile] == [.friend(id: 2)])
 
-		router.popToRoot(in: .profile)
+		router.popToRoot(in: .tab(.profile))
 
 		#expect(router[.profile].isEmpty)
 	}
@@ -161,7 +186,7 @@ struct NavigationTests {
 	func popAllToRoot() {
 		let router = TestRouter(initialTab: .home)
 		router.navigate(to: .photos)
-		router.navigate(to: .settings, in: .profile)
+		router.navigate(to: .settings, in: .tab(.profile))
 		router.switchTab(to: .profile)
 
 		router.popAllToRoot()

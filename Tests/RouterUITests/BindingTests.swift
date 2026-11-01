@@ -44,7 +44,7 @@ struct BindingTests {
 		let binding = router.sheetPathBinding()
 		router.present(sheet: .checkout)
 
-		router.navigateInSheet(to: .photos)
+		router.navigate(to: .photos, in: .sheet)
 
 		#expect(binding.wrappedValue == [.photos])
 
@@ -64,7 +64,7 @@ struct BindingTests {
 
 		#expect(router.presentedSheet?.stack == [.photos])
 
-		router.dismissSheet()
+		router.dismiss(.sheet)
 
 		#expect(binding.wrappedValue.isEmpty)
 	}
@@ -88,9 +88,9 @@ struct BindingTests {
 	func coverPathBinding() {
 		let router = TestRouter(initialTab: .home)
 		let binding = router.fullscreenCoverPathBinding()
-		router.present(fullscreenCover: .player)
+		router.present(cover: .player)
 
-		router.navigateInFullscreenCover(to: .photos)
+		router.navigate(to: .photos, in: .cover)
 
 		#expect(binding.wrappedValue == [.photos])
 
