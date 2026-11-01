@@ -27,10 +27,30 @@
 ///         default:           return nil
 ///         }
 ///     }
+///
+///     var path: String {
+///         switch self {
+///         case .onboarding:  "onboarding"
+///         case .videoPlayer: "video-player"
+///         }
+///     }
 /// }
 /// ```
 public protocol URLRoutableFullScreenCover: RouterFullScreenCover {
 	/// Returns the cover that corresponds to a URL path component, or `nil` if no cover matches.
 	/// - Parameter path: The path component following the cover prefix (e.g. `"onboarding"`).
 	static func cover(from path: String) -> Self?
+
+	/// The path component that names this cover. ``cover(from:)`` must map it back to `self`.
+	var path: String { get }
+}
+
+public extension URLRoutableFullScreenCover where Self: RawRepresentable, RawValue == String {
+	static func cover(from path: String) -> Self? {
+		Self(rawValue: path)
+	}
+
+	var path: String {
+		rawValue
+	}
 }

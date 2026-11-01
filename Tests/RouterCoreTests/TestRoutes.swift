@@ -53,6 +53,14 @@ extension TestDestination: URLRoutableDestination {
 			return nil
 		}
 	}
+
+	var pathComponents: [String] {
+		switch self {
+		case let .friend(id): ["friend", String(id)]
+		case .photos: ["photos"]
+		case .settings: ["settings"]
+		}
+	}
 }
 
 extension TestSheet: URLRoutableSheet {
@@ -72,5 +80,15 @@ extension TestCover: URLRoutableFullScreenCover {
 		case "player": .player
 		default: nil
 		}
+	}
+}
+
+extension Result {
+	var failure: Failure? {
+		if case let .failure(error) = self { error } else { nil }
+	}
+
+	var isSuccess: Bool {
+		if case .success = self { true } else { false }
 	}
 }

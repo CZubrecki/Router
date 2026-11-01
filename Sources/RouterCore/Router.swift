@@ -8,6 +8,9 @@ import Observation
 /// Foundation and Observation, so it also runs headless on macOS (tests, CLIs). The SwiftUI
 /// bindings used below come from `RouterUI`.
 ///
+/// Every change to the router's state is reported as a ``NavigationEvent`` through ``events``
+/// and ``onEvent``, including writes that come from SwiftUI bindings.
+///
 /// ## Usage
 ///
 /// ```swift
@@ -52,27 +55,104 @@ public final class Router<
 	Sheet: RouterSheet,
 	FullscreenCover: RouterFullScreenCover,
 > {
+	/// Where a navigation stack lives: a specific tab, whichever tab is selected, or the presented
+	/// sheet or cover.
+	public enum Context: Hashable, Sendable {
+		/// The stack of a specific tab.
+		case tab(Tab)
+		/// The stack of the selected tab. Events always report the resolved ``tab(_:)`` instead.
+		case currentTab
+		/// The stack inside the presented sheet.
+		case sheet
+		/// The stack inside the presented full-screen cover.
+		case cover
+	}
+
+	/// A modal the router can present.
+	public enum Presentation: Hashable, Sendable {
+		/// A sheet.
+		case sheet(Sheet)
+		/// A full-screen cover.
+		case cover(FullscreenCover)
+	}
+
+	/// A change to the router's state, delivered after the change is applied.
+	///
+	/// Contexts in events are always concrete: ``Context/currentTab`` is reported as the
+	/// ``Context/tab(_:)`` it resolved to.
+	public enum NavigationEvent: Hashable, Sendable {
+		/// The selected tab changed.
+		case switchedTab(from: Tab, to: Tab)
+		/// Destinations were pushed onto a stack, in push order.
+		case pushed([Destination], in: Context)
+		/// Destinations were popped off the top of a stack.
+		case popped(count: Int, in: Context)
+		/// A stack was replaced with new contents.
+		case stackReplaced([Destination], in: Context)
+		/// A sheet or cover was presented, replacing any presented modal of the same kind.
+		case presented(Presentation)
+		/// A sheet or cover was dismissed.
+		case dismissed(Presentation)
+		/// A deep link was applied. Read ``Router/snapshot`` for the resulting state.
+		case deepLinkHandled(URL)
+		/// A deep link was rejected and the router left unchanged.
+		case deepLinkRejected(URL, DeepLinkError)
+		/// The whole state was replaced by ``Router/restore(_:)``.
+		case restored
+	}
+
 	/// The currently selected tab.
-	public var selectedTab: Tab
+	///
+	/// Setting it is equivalent to ``switchTab(to:navigatingTo:)`` with no destination.
+	public var selectedTab: Tab {
+		get { tabSelection }
+		set { select(newValue) }
+	}
 
-	/// The sheet currently presented over the selected tab — bundled with its navigation stack —
+	/// The sheet currently presented over the selected tab, bundled with its navigation stack,
 	/// or `nil` when no sheet is presented.
-	public var presentedSheet: SheetPresentation<Sheet, Destination>?
+	///
+	/// Writes, including those from SwiftUI bindings, emit the matching event: presenting,
+	/// dismissing, or a push, pop, or replacement within the sheet's stack.
+	public var presentedSheet: SheetPresentation<Sheet, Destination>? {
+		get { sheetState }
+		set { assignSheet(newValue) }
+	}
 
-	/// The full-screen cover currently presented — bundled with its navigation stack — or `nil`
+	/// The full-screen cover currently presented, bundled with its navigation stack, or `nil`
 	/// when no cover is presented.
-	public var presentedFullscreenCover: FullscreenCoverPresentation<FullscreenCover, Destination>?
+	///
+	/// Writes, including those from SwiftUI bindings, emit the matching event: presenting,
+	/// dismissing, or a push, pop, or replacement within the cover's stack.
+	public var presentedFullscreenCover: FullscreenCoverPresentation<FullscreenCover, Destination>? {
+		get { coverState }
+		set { assignCover(newValue) }
+	}
 
 	/// A cover queued by ``replace(fullscreenCover:)``, waiting for the outgoing cover to finish
 	/// dismissing, or `nil` when nothing is queued.
 	public private(set) var pendingFullscreenCover: FullscreenCover?
 
+	/// The URL scheme and reserved prefixes used to render and parse routes.
+	public var routeFormat = RouteFormat()
+
+	/// Called synchronously on the main actor with every event, after the state change it
+	/// describes. Intended for a debug socket or analytics bridge.
+	@ObservationIgnored
+	public var onEvent: ((NavigationEvent) -> Void)?
+
+	private var tabSelection: Tab
 	private var paths: [Tab: [Destination]] = [:]
+	private var sheetState: SheetPresentation<Sheet, Destination>?
+	private var coverState: FullscreenCoverPresentation<FullscreenCover, Destination>?
+
+	@ObservationIgnored
+	private var continuations: [UUID: AsyncStream<NavigationEvent>.Continuation] = [:]
 
 	/// Creates a router with the given initial tab selected.
 	/// - Parameter initialTab: The tab to display when the router is first used.
 	public init(initialTab: Tab) {
-		selectedTab = initialTab
+		tabSelection = initialTab
 	}
 
 	/// Creates a router in the state captured by a snapshot.
@@ -82,37 +162,83 @@ public final class Router<
 		restore(snapshot)
 	}
 
+	deinit {
+		for continuation in continuations.values {
+			continuation.finish()
+		}
+	}
+
+	// MARK: - Snapshots
+
 	/// The router's entire navigation state as a value.
 	///
 	/// Encode it (when the routing types are `Codable`) to persist state, print it from a CLI, or
 	/// compare it in tests.
 	public var snapshot: Snapshot {
 		Snapshot(
-			selectedTab: selectedTab,
+			selectedTab: tabSelection,
 			paths: paths,
-			presentedSheet: presentedSheet,
-			presentedFullscreenCover: presentedFullscreenCover,
+			presentedSheet: sheetState,
+			presentedFullscreenCover: coverState,
 			pendingFullscreenCover: pendingFullscreenCover,
 		)
 	}
 
 	/// Replaces the router's entire navigation state with a snapshot's.
+	///
+	/// Emits ``NavigationEvent/restored`` unless the router is already in that state.
 	/// - Parameter snapshot: The state to apply.
 	public func restore(_ snapshot: Snapshot) {
-		selectedTab = snapshot.selectedTab
+		guard snapshot != self.snapshot else { return }
+		tabSelection = snapshot.selectedTab
 		paths = snapshot.paths
-		presentedSheet = snapshot.presentedSheet
-		presentedFullscreenCover = snapshot.presentedFullscreenCover
+		sheetState = snapshot.presentedSheet
+		coverState = snapshot.presentedFullscreenCover
 		pendingFullscreenCover = snapshot.pendingFullscreenCover
+		emit(.restored)
 	}
+
+	// MARK: - Events
+
+	/// A stream of every event from the moment it is created.
+	///
+	/// Each access returns a new, independent stream. The stream finishes when the router is
+	/// deallocated. Nothing is buffered or built while no stream or ``onEvent`` handler exists.
+	public var events: AsyncStream<NavigationEvent> {
+		let (stream, continuation) = AsyncStream.makeStream(of: NavigationEvent.self)
+		let id = UUID()
+		continuations[id] = continuation
+		continuation.onTermination = { [weak self] _ in
+			Task { @MainActor in
+				self?.continuations[id] = nil
+			}
+		}
+		return stream
+	}
+
+	var hasEventConsumers: Bool {
+		onEvent != nil || !continuations.isEmpty
+	}
+
+	func emit(_ event: @autoclosure () -> NavigationEvent) {
+		guard hasEventConsumers else { return }
+		let event = event()
+		for continuation in continuations.values {
+			continuation.yield(event)
+		}
+		onEvent?(event)
+	}
+
+	// MARK: - Path access
 
 	/// Accesses the navigation stack for a tab.
 	///
-	/// Reads return an empty array when no destinations have been pushed onto the tab yet.
+	/// Reads return an empty array when no destinations have been pushed onto the tab yet. Writes
+	/// emit a push, pop, or replacement event depending on how the stack changed.
 	/// - Parameter tab: The tab whose stack should be read or replaced.
 	public subscript(tab: Tab) -> [Destination] {
-		get { paths[tab, default: []] }
-		set { paths[tab] = newValue }
+		get { stack(in: .tab(tab)) }
+		set { assignStack(newValue, in: .tab(tab)) }
 	}
 
 	/// The navigation stack of the currently selected tab.
@@ -120,14 +246,16 @@ public final class Router<
 	/// Equivalent to `self[selectedTab]`. Reads return an empty array when no destinations have
 	/// been pushed onto the selected tab yet.
 	public var currentPath: [Destination] {
-		get { paths[selectedTab, default: []] }
-		set { paths[selectedTab] = newValue }
+		get { stack(in: .currentTab) }
+		set { assignStack(newValue, in: .currentTab) }
 	}
+
+	// MARK: - Tab navigation
 
 	/// Pushes a destination onto the currently selected tab's navigation stack.
 	/// - Parameter destination: The destination to push.
 	public func navigate(to destination: Destination) {
-		paths[selectedTab, default: []].append(destination)
+		push([destination], in: .currentTab)
 	}
 
 	/// Pushes a destination onto a specific tab's navigation stack.
@@ -135,13 +263,13 @@ public final class Router<
 	///   - destination: The destination to push.
 	///   - tab: The tab whose stack should receive the destination.
 	public func navigate(to destination: Destination, in tab: Tab) {
-		paths[tab, default: []].append(destination)
+		push([destination], in: .tab(tab))
 	}
 
 	/// Pushes a sequence of destinations onto the currently selected tab's navigation stack.
 	/// - Parameter destinations: The destinations to push, in order.
 	public func navigate(to destinations: Destination...) {
-		paths[selectedTab, default: []].append(contentsOf: destinations)
+		push(destinations, in: .currentTab)
 	}
 
 	/// Pushes a sequence of destinations onto a specific tab's navigation stack.
@@ -149,21 +277,22 @@ public final class Router<
 	///   - destinations: The destinations to push, in order.
 	///   - tab: The tab whose stack should receive the destinations.
 	public func navigate(to destinations: Destination..., in tab: Tab) {
-		paths[tab, default: []].append(contentsOf: destinations)
+		push(destinations, in: .tab(tab))
 	}
 
 	/// Switches to a tab and optionally pushes a destination onto that tab's stack.
 	///
-	/// Useful for deep links and notification taps — "open the Profile tab and push the friend's
-	/// detail screen" in one call.
+	/// Useful for deep links and notification taps: "open the Profile tab and push the friend's
+	/// detail screen" in one call. Emits a tab switch and a push, each only when it changes
+	/// something.
 	/// - Parameters:
 	///   - tab: The tab to select.
 	///   - destination: A destination to push onto the tab's stack after switching, or `nil` to
 	///     leave the stack untouched. Defaults to `nil`.
 	public func switchTab(to tab: Tab, navigatingTo destination: Destination? = nil) {
-		selectedTab = tab
+		select(tab)
 		if let destination {
-			paths[tab, default: []].append(destination)
+			push([destination], in: .tab(tab))
 		}
 	}
 
@@ -172,60 +301,25 @@ public final class Router<
 	///   - tab: The tab to select.
 	///   - destinations: The destinations to install as the tab's new stack, in order.
 	public func switchTab(to tab: Tab, resetTo destinations: Destination...) {
-		selectedTab = tab
-		paths[tab] = destinations
+		select(tab)
+		replaceStack(destinations, in: .tab(tab))
 	}
 
-	/// Pushes a destination onto the currently presented sheet's navigation stack.
-	///
-	/// No-op when no sheet is presented.
-	/// - Parameter destination: The destination to push.
-	public func navigateInSheet(to destination: Destination) {
-		presentedSheet?.stack.append(destination)
-	}
-
-	/// Pushes a sequence of destinations onto the currently presented sheet's navigation stack.
-	///
-	/// No-op when no sheet is presented.
-	/// - Parameter destinations: The destinations to push, in order.
-	public func navigateInSheet(to destinations: Destination...) {
-		presentedSheet?.stack.append(contentsOf: destinations)
-	}
-
-	/// Removes the top destinations from the currently presented sheet's navigation stack.
-	///
-	/// No-op when no sheet is presented. If `count` exceeds the stack depth, the stack is
-	/// emptied without trapping.
-	/// - Parameter count: The number of destinations to remove. Defaults to `1`.
-	public func popInSheet(_ count: Int = 1) {
-		let currentCount = presentedSheet?.stack.count ?? 0
-		guard currentCount > 0 else { return }
-		let removeCount = min(count, currentCount)
-		presentedSheet?.stack.removeLast(removeCount)
-	}
-
-	/// Clears the navigation stack inside the currently presented sheet without dismissing it.
-	///
-	/// No-op when no sheet is presented.
-	public func popInSheetToRoot() {
-		presentedSheet?.stack.removeAll()
-	}
+	// MARK: - Popping
 
 	/// Removes the top destinations from the currently selected tab's navigation stack.
 	///
 	/// If `count` exceeds the stack depth, the stack is emptied without trapping.
 	/// - Parameter count: The number of destinations to remove. Defaults to `1`.
 	public func pop(_ count: Int = 1) {
-		let currentCount = paths[selectedTab, default: []].count
-		let removeCount = min(count, currentCount)
-		paths[selectedTab]?.removeLast(removeCount)
+		popStack(count, in: .currentTab)
 	}
 
 	/// Clears the navigation stack for a tab.
 	/// - Parameter tab: The tab to clear, or `nil` to clear the currently selected tab.
 	///   Defaults to `nil`.
 	public func popToRoot(in tab: Tab? = nil) {
-		paths[tab ?? selectedTab] = []
+		popStackToRoot(in: tab.map(Context.tab) ?? .currentTab)
 	}
 
 	/// Pops a tab's navigation stack back to a specific destination, keeping that destination
@@ -238,38 +332,84 @@ public final class Router<
 	///   - tab: The tab whose stack should be popped, or `nil` to use the currently selected
 	///     tab. Defaults to `nil`.
 	public func popTo(_ destination: Destination, in tab: Tab? = nil) {
-		let targetTab = tab ?? selectedTab
-		guard let index = paths[targetTab, default: []].firstIndex(of: destination) else { return }
-		paths[targetTab] = Array(paths[targetTab, default: []].prefix(through: index))
+		popStack(to: destination, in: tab.map(Context.tab) ?? .currentTab)
 	}
 
 	/// Clears the navigation stacks of every tab.
 	///
-	/// Use at sign-out or other "reset the whole app" moments.
+	/// Use at sign-out or other "reset the whole app" moments. Emits one pop event per tab that
+	/// had a non-empty stack.
 	public func popAllToRoot() {
-		paths.removeAll()
+		let tabs = paths.keys.sorted { String(describing: $0) < String(describing: $1) }
+		for tab in tabs {
+			popStackToRoot(in: .tab(tab))
+		}
 	}
+
+	// MARK: - Sheets
 
 	/// Presents a sheet, replacing any currently presented sheet.
 	/// - Parameter sheet: The sheet to present.
 	public func present(sheet: Sheet) {
-		presentedSheet = SheetPresentation(sheet: sheet)
+		let presentation = SheetPresentation<Sheet, Destination>(sheet: sheet)
+		guard sheetState != presentation else { return }
+		sheetState = presentation
+		emit(.presented(.sheet(sheet)))
+	}
+
+	/// Pushes a destination onto the currently presented sheet's navigation stack.
+	///
+	/// No-op when no sheet is presented.
+	/// - Parameter destination: The destination to push.
+	public func navigateInSheet(to destination: Destination) {
+		push([destination], in: .sheet)
+	}
+
+	/// Pushes a sequence of destinations onto the currently presented sheet's navigation stack.
+	///
+	/// No-op when no sheet is presented.
+	/// - Parameter destinations: The destinations to push, in order.
+	public func navigateInSheet(to destinations: Destination...) {
+		push(destinations, in: .sheet)
+	}
+
+	/// Removes the top destinations from the currently presented sheet's navigation stack.
+	///
+	/// No-op when no sheet is presented. If `count` exceeds the stack depth, the stack is
+	/// emptied without trapping.
+	/// - Parameter count: The number of destinations to remove. Defaults to `1`.
+	public func popInSheet(_ count: Int = 1) {
+		popStack(count, in: .sheet)
+	}
+
+	/// Clears the navigation stack inside the currently presented sheet without dismissing it.
+	///
+	/// No-op when no sheet is presented.
+	public func popInSheetToRoot() {
+		popStackToRoot(in: .sheet)
 	}
 
 	/// Dismisses the currently presented sheet and clears its navigation stack.
 	public func dismissSheet() {
-		presentedSheet = nil
+		guard let sheet = sheetState?.sheet else { return }
+		sheetState = nil
+		emit(.dismissed(.sheet(sheet)))
 	}
+
+	// MARK: - Covers
 
 	/// Presents a full-screen cover, replacing any currently presented cover.
 	/// - Parameter fullscreenCover: The cover to present.
 	public func present(fullscreenCover: FullscreenCover) {
-		presentedFullscreenCover = FullscreenCoverPresentation(cover: fullscreenCover)
+		let presentation = FullscreenCoverPresentation<FullscreenCover, Destination>(cover: fullscreenCover)
+		guard coverState != presentation else { return }
+		coverState = presentation
+		emit(.presented(.cover(fullscreenCover)))
 	}
 
 	/// Swaps the presented full-screen cover for a different one.
 	///
-	/// SwiftUI cannot dismiss one cover and present another in the same update — the incoming
+	/// SwiftUI cannot dismiss one cover and present another in the same update: the incoming
 	/// presentation is dropped. When a cover is already showing, this dismisses it and queues the
 	/// replacement in ``pendingFullscreenCover`` instead; the host presents the queued cover once
 	/// dismissal completes:
@@ -287,21 +427,25 @@ public final class Router<
 	///
 	/// When nothing is presented or queued this presents immediately and queues nothing. Replacing
 	/// again before the queue drains supersedes the queued cover rather than presenting into a
-	/// window that is still dismissing.
+	/// window that is still dismissing. Emits the outgoing cover's dismissal; the replacement's
+	/// presentation is reported when it is presented.
 	/// - Parameter fullscreenCover: The cover that should end up presented.
 	public func replace(fullscreenCover: FullscreenCover) {
-		guard presentedFullscreenCover != nil || pendingFullscreenCover != nil else {
+		guard coverState != nil || pendingFullscreenCover != nil else {
 			present(fullscreenCover: fullscreenCover)
 			return
 		}
 
 		pendingFullscreenCover = fullscreenCover
-		presentedFullscreenCover = nil
+		if let outgoing = coverState?.cover {
+			coverState = nil
+			emit(.dismissed(.cover(outgoing)))
+		}
 	}
 
 	/// Consumes the cover queued by ``replace(fullscreenCover:)``.
 	///
-	/// Call from the host's dismissal handler. Returns `nil` — and does nothing — when no
+	/// Call from the host's dismissal handler. Returns `nil` (and does nothing) when no
 	/// replacement is queued, so it is safe to call on every dismissal.
 	/// - Returns: The queued cover, or `nil` if none was queued.
 	public func takePendingFullscreenCover() -> FullscreenCover? {
@@ -314,7 +458,7 @@ public final class Router<
 	/// No-op when no cover is presented.
 	/// - Parameter destination: The destination to push.
 	public func navigateInFullscreenCover(to destination: Destination) {
-		presentedFullscreenCover?.stack.append(destination)
+		push([destination], in: .cover)
 	}
 
 	/// Pushes a sequence of destinations onto the currently presented full-screen cover's
@@ -323,7 +467,7 @@ public final class Router<
 	/// No-op when no cover is presented.
 	/// - Parameter destinations: The destinations to push, in order.
 	public func navigateInFullscreenCover(to destinations: Destination...) {
-		presentedFullscreenCover?.stack.append(contentsOf: destinations)
+		push(destinations, in: .cover)
 	}
 
 	/// Removes the top destinations from the currently presented full-screen cover's
@@ -333,10 +477,7 @@ public final class Router<
 	/// emptied without trapping.
 	/// - Parameter count: The number of destinations to remove. Defaults to `1`.
 	public func popInFullscreenCover(_ count: Int = 1) {
-		let currentCount = presentedFullscreenCover?.stack.count ?? 0
-		guard currentCount > 0 else { return }
-		let removeCount = min(count, currentCount)
-		presentedFullscreenCover?.stack.removeLast(removeCount)
+		popStack(count, in: .cover)
 	}
 
 	/// Clears the navigation stack inside the currently presented full-screen cover without
@@ -344,16 +485,156 @@ public final class Router<
 	///
 	/// No-op when no cover is presented.
 	public func popInFullscreenCoverToRoot() {
-		presentedFullscreenCover?.stack.removeAll()
+		popStackToRoot(in: .cover)
 	}
 
 	/// Dismisses the currently presented full-screen cover and clears its navigation stack.
 	///
-	/// Also discards any cover queued by ``replace(fullscreenCover:)`` — an explicit dismissal
+	/// Also discards any cover queued by ``replace(fullscreenCover:)``: an explicit dismissal
 	/// means nothing should end up presented. Hosts draining the queue in their dismissal handler
 	/// should call ``takePendingFullscreenCover()`` rather than this method.
 	public func dismissFullscreenCover() {
-		presentedFullscreenCover = nil
 		pendingFullscreenCover = nil
+		guard let cover = coverState?.cover else { return }
+		coverState = nil
+		emit(.dismissed(.cover(cover)))
+	}
+
+	// MARK: - Deep links
+
+	func apply(_ target: DeepLinkTarget, from url: URL) {
+		switch target {
+		case let .tab(tab, stack):
+			tabSelection = tab
+			writeStack(stack, in: .tab(tab))
+		case let .sheet(sheet, stack):
+			sheetState = SheetPresentation(sheet: sheet, stack: stack)
+		case let .cover(cover, stack):
+			coverState = FullscreenCoverPresentation(cover: cover, stack: stack)
+		}
+		emit(.deepLinkHandled(url))
+	}
+
+	// MARK: - Stack primitives
+
+	private func resolve(_ context: Context) -> Context? {
+		switch context {
+		case .tab: context
+		case .currentTab: .tab(tabSelection)
+		case .sheet: sheetState == nil ? nil : .sheet
+		case .cover: coverState == nil ? nil : .cover
+		}
+	}
+
+	private func stack(in context: Context) -> [Destination] {
+		switch context {
+		case let .tab(tab): paths[tab, default: []]
+		case .currentTab: paths[tabSelection, default: []]
+		case .sheet: sheetState?.stack ?? []
+		case .cover: coverState?.stack ?? []
+		}
+	}
+
+	private func writeStack(_ stack: [Destination], in context: Context) {
+		switch context {
+		case let .tab(tab): paths[tab] = stack.isEmpty ? nil : stack
+		case .currentTab: paths[tabSelection] = stack.isEmpty ? nil : stack
+		case .sheet: sheetState?.stack = stack
+		case .cover: coverState?.stack = stack
+		}
+	}
+
+	private func select(_ tab: Tab) {
+		guard tab != tabSelection else { return }
+		let previous = tabSelection
+		tabSelection = tab
+		emit(.switchedTab(from: previous, to: tab))
+	}
+
+	private func push(_ destinations: [Destination], in context: Context) {
+		guard !destinations.isEmpty, let context = resolve(context) else { return }
+		writeStack(stack(in: context) + destinations, in: context)
+		emit(.pushed(destinations, in: context))
+	}
+
+	private func popStack(_ count: Int, in context: Context) {
+		guard let context = resolve(context) else { return }
+		let current = stack(in: context)
+		let removed = min(max(count, 0), current.count)
+		guard removed > 0 else { return }
+		writeStack(Array(current.dropLast(removed)), in: context)
+		emit(.popped(count: removed, in: context))
+	}
+
+	private func popStackToRoot(in context: Context) {
+		popStack(stack(in: context).count, in: context)
+	}
+
+	private func popStack(to destination: Destination, in context: Context) {
+		let current = stack(in: context)
+		guard let index = current.firstIndex(of: destination) else { return }
+		popStack(current.count - index - 1, in: context)
+	}
+
+	private func replaceStack(_ destinations: [Destination], in context: Context) {
+		guard let context = resolve(context), stack(in: context) != destinations else { return }
+		writeStack(destinations, in: context)
+		emit(.stackReplaced(destinations, in: context))
+	}
+
+	// MARK: - Property writes
+
+	private func assignStack(_ new: [Destination], in context: Context) {
+		guard let context = resolve(context) else { return }
+		let old = stack(in: context)
+		guard old != new else { return }
+		writeStack(new, in: context)
+		emit(Self.stackChange(from: old, to: new, in: context))
+	}
+
+	private func assignSheet(_ new: SheetPresentation<Sheet, Destination>?) {
+		let old = sheetState
+		guard old != new else { return }
+		sheetState = new
+		switch (old, new) {
+		case let (old?, new?) where old.sheet == new.sheet:
+			emit(Self.stackChange(from: old.stack, to: new.stack, in: .sheet))
+		case let (_, new?):
+			emit(.presented(.sheet(new.sheet)))
+		case let (old?, nil):
+			emit(.dismissed(.sheet(old.sheet)))
+		case (nil, nil):
+			break
+		}
+	}
+
+	private func assignCover(_ new: FullscreenCoverPresentation<FullscreenCover, Destination>?) {
+		let old = coverState
+		guard old != new else { return }
+		coverState = new
+		switch (old, new) {
+		case let (old?, new?) where old.cover == new.cover:
+			emit(Self.stackChange(from: old.stack, to: new.stack, in: .cover))
+		case let (_, new?):
+			emit(.presented(.cover(new.cover)))
+		case let (old?, nil):
+			emit(.dismissed(.cover(old.cover)))
+		case (nil, nil):
+			break
+		}
+	}
+
+	private static func stackChange(
+		from old: [Destination],
+		to new: [Destination],
+		in context: Context,
+	) -> NavigationEvent {
+		if new.starts(with: old) {
+			return .pushed(Array(new.dropFirst(old.count)), in: context)
+		}
+		if old.starts(with: new) {
+			return .popped(count: old.count - new.count, in: context)
+		}
+		return .stackReplaced(new, in: context)
 	}
 }
