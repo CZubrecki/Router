@@ -14,7 +14,7 @@ jobs:
     name: RouterCore (macOS, swift test)
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
@@ -29,7 +29,7 @@ jobs:
     name: RouterUI (iOS simulator, xcodebuild test)
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
@@ -44,7 +44,7 @@ jobs:
     name: DocC
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
@@ -53,8 +53,9 @@ jobs:
           xcodebuild docbuild -scheme RouterCore -destination 'generic/platform=macOS' -derivedDataPath .build/docs
           xcodebuild docbuild -scheme RouterUI -destination 'generic/platform=iOS Simulator' -derivedDataPath .build/docs
           mkdir -p docs-out
-          find .build/docs/Build/Products -maxdepth 2 -name '*.doccarchive' -exec cp -R {} docs-out/ \;
-      - uses: actions/upload-artifact@v4
+          ditto -c -k --keepParent .build/docs/Build/Products/Debug/RouterCore.doccarchive docs-out/RouterCore.doccarchive.zip
+          ditto -c -k --keepParent .build/docs/Build/Products/Debug-iphonesimulator/RouterUI.doccarchive docs-out/RouterUI.doccarchive.zip
+      - uses: actions/upload-artifact@v7
         with:
           name: docc
           path: docs-out
