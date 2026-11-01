@@ -4,6 +4,9 @@ This file maps every API change from 0.2 to 1.0.
 Each section lists what changed in one release and the mechanical edit that ports an app to it.
 Apply them in order when skipping releases.
 
+The 0.3, 0.4, and 0.5 steps were milestones on the way to 1.0 and were never tagged.
+The `v0.3.0` tag predates them and still has the 0.2 API, so porting from any 0.x tag to `v1.0.0` means applying every section below.
+
 ## 0.2 → 0.3: RouterCore and RouterUI
 
 The single `Router` library is now two:
@@ -156,17 +159,16 @@ Delete the `onDismiss` handler that drained the queue:
 
 `takePendingFullscreenCover()` is a deprecated no-op that returns `nil`, so an un-migrated handler does nothing rather than presenting twice.
 
-## 0.5 → 1.0: deprecated names removed
+## 0.5 → 1.0: deprecated names removed, cover hooks, and tab order
 
 The deprecated 0.2 names listed in the 0.5 table are gone, along with `takePendingFullscreenCover()`.
 Fix any remaining deprecation warnings on 0.5 first; once a project builds warning-free on 0.5, it builds on 1.0 unchanged.
 
 Pin with `.upToNextMajor(from: "1.0.0")`.
 
-## 1.0 → 1.1: cover lifecycle hooks and tab order
+### Presenting covers
 
-Nothing breaks.
-Present covers with the new `fullScreenCover(router:)` modifier so `replace(cover:)` presents the replacement after the outgoing cover finishes dismissing:
+Present covers with the `fullScreenCover(router:)` modifier so `replace(cover:)` presents the replacement after the outgoing cover finishes dismissing, and the router's state matches what is on screen during the swap:
 
 ```swift
 // Before
@@ -180,7 +182,9 @@ Present covers with the new `fullScreenCover(router:)` modifier so `replace(cove
 }
 ```
 
-A host that keeps its own `.fullScreenCover(item:)` can call `router.coverDidAppear()` and `router.coverDidDismiss()` itself, or leave the router to present the replacement on the next main-actor turn as in 1.0.
+A host that keeps its own `.fullScreenCover(item:)` can call `router.coverDidAppear()` and `router.coverDidDismiss()` itself, or leave the router to present the replacement on the next main-actor turn as in 0.5.
+
+### Tab order
 
 `popAllToRoot()` emits its pops in a new order: tab order when `Tab` is `Comparable`, and otherwise the order the stacks were started.
 Snapshot JSON keeps its order unless `Tab` is `Comparable`, in which case stacks are listed in tab order.
