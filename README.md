@@ -1,119 +1,93 @@
 # Router
 
-A type-safe, observable routing primitive for SwiftUI apps built around `TabView`, `NavigationStack`, and modal presentations.
+A type-safe, observable navigation model for SwiftUI apps built around `TabView`, `NavigationStack`, and modal presentations.
+
+Navigation is a value the app owns.
+Views only observe it, deep links produce a state rather than mutate one, and the whole model runs headless on macOS so tests and command-line tools can drive it without a simulator.
+
+Router ships as two libraries:
+
+| Library      | Imports                     | Platforms        | Use it from                                   |
+|--------------|-----------------------------|------------------|-----------------------------------------------|
+| `RouterCore` | Foundation, Observation     | iOS 18, macOS 14 | Feature and core packages, tests, CLIs        |
+| `RouterUI`   | `RouterCore`, SwiftUI       | iOS 18           | Views and the app target                      |
+
+`RouterUI` re-exports `RouterCore`, so views only need `import RouterUI`.
 
 ## Features
 
-- **Type-safe** generic over your own `Tab`, `Destination`, `Sheet`, and `FullscreenCover` enums.
-- **Observable** via the `@Observable` macro — view updates propagate automatically.
-- **Single source of truth** for tab selection, per-tab navigation stacks, and presented sheets / covers.
-- **Bundled presentation state**: sheets and covers carry their own navigation stacks, so they can't desync from their presentation identity.
+- **Type-safe**: generic over your own `Tab`, `Destination`, `Sheet`, and `FullscreenCover` enums.
+- **Observable** via the `@Observable` macro, so view updates propagate automatically.
+- **Single source of truth** for tab selection, per-tab navigation stacks, and presented sheets and covers.
+- **Bundled presentation state**: sheets and covers carry their own navigation stacks, so they can't drift out of sync with their presentation identity.
+- **Snapshots**: the whole router is a `Codable`, `Equatable` value you can persist, print, diff, and restore.
 - **Deep linking** via opt-in `URLRoutable*` protocols, with sheet and cover deep links supported through reserved URL prefixes.
-- **Idiomatic SwiftUI integration**: `Binding` helpers, `Identifiable` presentation structs, and a one-line `.onOpenURL(with:)` view modifier.
+- **Headless**: `RouterCore` has no SwiftUI dependency and runs under `swift test` on macOS.
 - **`@MainActor`-isolated** for correct concurrency.
 
 ## Requirements
 
-- Swift 6.0+
-- iOS 18+
-- Xcode 16+
+- Swift 6.3 toolchain or later
+- iOS 18+ (`RouterCore` and `RouterUI`)
+- macOS 14+ (`RouterCore`)
 
 ## Installation
 
-Add the package to your project via Swift Package Manager:
+Add the package with Swift Package Manager:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/CZubrecki/Router.git", from: "0.2.0"),
+    .package(url: "https://github.com/CZubrecki/Router.git", .upToNextMinor(from: "0.3.0")),
 ]
 ```
 
-Then import where needed:
+Then depend on the library each target needs:
 
 ```swift
-import Router
+.target(name: "Features", dependencies: [.product(name: "RouterCore", package: "Router")]),
+.target(name: "AppUI", dependencies: [.product(name: "RouterUI", package: "Router")]),
 ```
 
-## Quick start
+Upgrading from 0.2? See [MIGRATION.md](MIGRATION.md).
+
+# Core
+
+Everything in this section lives in `RouterCore` and works anywhere, including macOS command-line tools and test targets with no SwiftUI.
+
+## Defining routes
 
 ```swift
-import Router
-import SwiftUI
+import RouterCore
 
-// 1. Define your routing types.
-
-enum AppTab: Hashable, Sendable, RouterTab {
+enum AppTab: String, Codable, RouterTab {
     case home, profile, settings
-
-    var title: LocalizedStringKey? {
-        switch self {
-        case .home:     "Home"
-        case .profile:  "Profile"
-        case .settings: "Settings"
-        }
-    }
-
-    var image: TabImage? {
-        switch self {
-        case .home:     .systemImage("house")
-        case .profile:  .systemImage("person.circle")
-        case .settings: .systemImage("gear")
-        }
-    }
 }
 
-enum AppDestination: Hashable, Sendable, RouterDestination {
+enum AppDestination: Codable, RouterDestination {
     case friend(id: Int)
     case settings
 }
 
-enum AppSheet: Hashable, Sendable, RouterSheet {
+enum AppSheet: String, Codable, RouterSheet {
     case login
 }
 
-enum AppCover: Hashable, Sendable, RouterFullScreenCover {
+enum AppCover: String, Codable, RouterFullScreenCover {
     case onboarding
 }
 
 typealias AppRouter = Router<AppTab, AppDestination, AppSheet, AppCover>
-
-// 2. Create a router and wire it into your view tree.
-
-struct RootView: View {
-    @State private var router = AppRouter(initialTab: .home)
-
-    var body: some View {
-        @Bindable var router = router
-        TabView(selection: $router.selectedTab) {
-            Tab(value: AppTab.home) {
-                NavigationStack(path: router.pathBinding(for: .home)) {
-                    HomeRoot()
-                        .navigationDestination(for: AppDestination.self) { destination in
-                            view(for: destination)
-                        }
-                }
-            } label: {
-                Label("Home", systemImage: "house")
-            }
-            // ...other tabs
-        }
-        .sheet(item: $router.presentedSheet) { presentation in
-            view(for: presentation.sheet)
-        }
-        .fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
-            view(for: presentation.cover)
-        }
-        .environment(router)
-    }
-}
 ```
+
+`Codable` is optional.
+Conform the four enums to it when you want snapshots to be `Codable` too.
 
 ## Driving navigation
 
 All mutations go through the router:
 
 ```swift
-@Environment(AppRouter.self) private var router
+let router = AppRouter(initialTab: .home)
 
 // Push onto the current tab's stack
 router.navigate(to: .friend(id: 42))
@@ -139,9 +113,258 @@ router.popToRoot(in: .profile)     // a specific tab
 router.popAllToRoot()              // every tab
 ```
 
-### Native SwiftUI transitions (zoom, etc.)
+## Sheets and full-screen covers
 
-The router only manipulates the data layer (`[Destination]`, `presentedSheet`, …), so every native SwiftUI navigation transition — including the iOS 18 [zoom transition](https://developer.apple.com/documentation/swiftui/navigationtransition/zoom(sourceid:in:)) — works without router involvement. The router triggers the push; SwiftUI animates it.
+Presentation state is held alongside its own navigation stack so the two can't drift apart.
+
+```swift
+// Present
+router.present(sheet: .login)
+router.present(fullscreenCover: .onboarding)
+
+// Push inside a presented sheet / cover
+router.navigateInSheet(to: .friend(id: 42))
+router.navigateInFullscreenCover(to: .settings)
+
+// Pop inside
+router.popInSheet()
+router.popInFullscreenCover(2)
+router.popInSheetToRoot()
+router.popInFullscreenCoverToRoot()
+
+// Dismiss
+router.dismissSheet()
+router.dismissFullscreenCover()
+```
+
+Sheets and full-screen covers are **global** to the router.
+There is one of each at a time, and they persist across tab switches by design.
+This matches native iOS apps like Clock: tap "+" on Alarms to open the new-alarm sheet, then tap Timers, and the sheet stays visible on top.
+
+In practice, users can't *trigger* a tab switch during a modal, because `.sheet()` covers the tab bar at most detents and blocks interaction underneath.
+So the persistence rule mainly affects programmatic switches (notifications, deep links).
+
+## Snapshots
+
+`router.snapshot` captures the whole router as a value: the selected tab, every tab's stack, the presented sheet and cover with their stacks, and any queued cover replacement.
+
+```swift
+let saved = router.snapshot              // Router.Snapshot: Hashable, Sendable
+let copy = AppRouter(snapshot: saved)    // a new router in that state
+router.restore(saved)                    // put a live router back into that state
+```
+
+`Snapshot` is `Codable` when all four routing types are.
+Paths are encoded as a list sorted by tab, so with `.sortedKeys` the JSON is byte-stable across runs and fixtures diff cleanly in git:
+
+```swift
+let encoder = JSONEncoder()
+encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
+let json = try encoder.encode(router.snapshot)
+```
+
+```json
+{
+  "paths" : [
+    { "stack" : [ { "friend" : { "id" : 42 } } ], "tab" : "profile" }
+  ],
+  "presentedSheet" : { "sheet" : "login", "stack" : [ ] },
+  "selectedTab" : "profile"
+}
+```
+
+Empty stacks are left out, so a tab popped back to its root equals one that was never touched.
+Where and when to save a snapshot (`SceneStorage`, a file, a test fixture) is up to the app.
+See [Restoring navigation on launch](#restoring-navigation-on-launch) for a `SceneStorage` example.
+
+## Deep linking
+
+Conform your tab, destination, sheet, and cover types to the corresponding `URLRoutable*` protocols.
+Sheet and cover conformance is optional; the router checks for it at runtime.
+
+```swift
+extension AppTab: URLRoutableTab {
+    static func tab(from path: String) -> AppTab? {
+        AppTab(rawValue: path)
+    }
+}
+
+extension AppDestination: URLRoutableDestination {
+    static func destination(
+        consuming components: ArraySlice<String>,
+        parameters: [String: String]
+    ) -> (destination: AppDestination, consumed: Int)? {
+        guard let head = components.first else { return nil }
+        switch head {
+        case "friend":
+            guard let id = components.dropFirst().first.flatMap(Int.init) else { return nil }
+            return (.friend(id: id), 2)
+        case "settings":
+            return (.settings, 1)
+        default:
+            return nil
+        }
+    }
+}
+
+extension AppSheet: URLRoutableSheet {
+    static func sheet(from path: String) -> AppSheet? {
+        AppSheet(rawValue: path)
+    }
+}
+```
+
+URL conventions:
+
+| URL                                       | Result                                                  |
+|-------------------------------------------|---------------------------------------------------------|
+| `myapp://profile/friend/42`               | Select `.profile`, stack `[.friend(id: 42)]`            |
+| `myapp://sheet/login`                     | Present sheet `.login`                                  |
+| `myapp://sheet/checkout/payment/confirm`  | Present sheet `.checkout`, stack `[.payment, .confirm]` |
+| `myapp://cover/onboarding`                | Present cover `.onboarding`                             |
+
+The matched stack is *replaced* with the parsed destinations.
+The `sheet` and `cover` prefixes are reserved by default; both are configurable on `handleDeepLink(url:treatHostAsPath:sheetPrefix:coverPrefix:)`.
+
+For universal links (`https://example.com/...`), pass `treatHostAsPath: false` so the host (your domain) isn't treated as the first route component.
+
+## Running headless
+
+Because `RouterCore` builds for macOS without SwiftUI, a command-line tool or test can load a state, drive it, and print the result with no simulator:
+
+```swift
+import Foundation
+import RouterCore
+
+let router = AppRouter(initialTab: .home)
+
+// Load a fixture
+let fixture = try JSONDecoder().decode(AppRouter.Snapshot.self, from: Data(contentsOf: fixtureURL))
+router.restore(fixture)
+
+// Drive it
+router.handleDeepLink(url: URL(string: "myapp://profile/friend/42")!)
+
+// Print the state
+let encoder = JSONEncoder()
+encoder.outputFormatting = [.sortedKeys]
+print(String(decoding: try encoder.encode(router.snapshot), as: UTF8.self))
+```
+
+# UI
+
+Everything in this section lives in `RouterUI`, which adds the SwiftUI glue on top of `RouterCore`.
+
+## Quick start
+
+```swift
+import RouterUI
+import SwiftUI
+
+struct RootView: View {
+    @State private var router = AppRouter(initialTab: .home)
+
+    var body: some View {
+        @Bindable var router = router
+        TabView(selection: $router.selectedTab) {
+            Tab(value: AppTab.home) {
+                NavigationStack(path: router.pathBinding(for: .home)) {
+                    HomeRoot()
+                        .navigationDestination(for: AppDestination.self) { destination in
+                            view(for: destination)
+                        }
+                }
+            } label: {
+                Label("Home", systemImage: "house")
+            }
+            // ...other tabs
+        }
+        .sheet(item: $router.presentedSheet) { presentation in
+            view(for: presentation.sheet)
+        }
+        .fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
+            view(for: presentation.cover)
+        }
+        .onOpenURL(with: router)
+        .environment(router)
+    }
+}
+```
+
+`SheetPresentation` and `FullscreenCoverPresentation` conform to `Identifiable`, so they bind directly to `.sheet(item:)` and `.fullScreenCover(item:)`.
+
+## Tab titles and images
+
+Tab display details live in `TabPresentable`, so the tab enum itself can stay in a package with no SwiftUI.
+Add the conformance in the UI layer:
+
+```swift
+extension AppTab: TabPresentable {
+    var title: LocalizedStringKey? {
+        switch self {
+        case .home:     "Home"
+        case .profile:  "Profile"
+        case .settings: "Settings"
+        }
+    }
+
+    var image: TabImage? {
+        switch self {
+        case .home:     .systemImage("house")
+        case .profile:  .systemImage("person.circle")
+        case .settings: .systemImage("gear")
+        }
+    }
+}
+```
+
+`title`, `image`, and `role` all default to `nil`, so implement only what each tab needs.
+
+## Navigation stacks inside a modal
+
+A modal that hosts a multi-step flow gets its own `NavigationStack`, driven by the presentation's bundled stack:
+
+```swift
+.fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
+    NavigationStack(path: router.fullscreenCoverPathBinding()) {
+        view(for: presentation.cover)
+            .navigationDestination(for: AppDestination.self) { destination in
+                view(for: destination)
+            }
+    }
+}
+```
+
+`sheetPathBinding()` does the same for sheets.
+Both read as empty and discard writes when nothing is presented, so the binding can be built before anything is on screen.
+
+## Swapping one cover for another
+
+SwiftUI drops the incoming presentation if you dismiss one full-screen cover and present another in the same update.
+`replace(fullscreenCover:)` handles the handoff: it dismisses the current cover and queues the replacement, which the host presents once dismissal finishes.
+
+```swift
+// From anywhere - e.g. a sign-up prompt inside an onboarding cover
+router.replace(fullscreenCover: .login)
+
+// Drained by the host
+.fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
+    view(for: presentation.cover)
+} onDismiss: {
+    if let next = router.takePendingFullscreenCover() {
+        DispatchQueue.main.async { router.present(fullscreenCover: next) }
+    }
+}
+```
+
+With nothing presented, `replace(fullscreenCover:)` presents immediately.
+Calling it again before the queue drains supersedes the queued cover.
+`dismissFullscreenCover()` cancels a queued replacement, so drain with `takePendingFullscreenCover()` rather than dismissing again.
+
+## Native SwiftUI transitions (zoom, etc.)
+
+The router only manipulates data (`[Destination]`, `presentedSheet`, ...), so every native SwiftUI navigation transition, including the iOS 18 [zoom transition](https://developer.apple.com/documentation/swiftui/navigationtransition/zoom(sourceid:in:)), works without router involvement.
+The router triggers the push; SwiftUI animates it.
 
 ```swift
 struct HomeRoot: View {
@@ -168,84 +391,16 @@ struct HomeRoot: View {
 }
 ```
 
-The same pattern applies to sheets and full-screen covers — apply `.navigationTransition(.zoom(sourceID:in:))` to the presented view.
+The same pattern applies to sheets and full-screen covers: apply `.navigationTransition(.zoom(sourceID:in:))` to the presented view.
 
-## Sheets and full-screen covers
+## Nested sheets
 
-Presentation state is held alongside its own navigation stack so they can't desync.
-
-```swift
-// Present
-router.present(sheet: .login)
-router.present(fullscreenCover: .onboarding)
-
-// Push inside a presented sheet / cover
-router.navigateInSheet(to: .friend(id: 42))
-router.navigateInFullscreenCover(to: .settings)
-
-// Pop inside
-router.popInSheet()
-router.popInFullscreenCover(2)
-router.popInSheetToRoot()
-router.popInFullscreenCoverToRoot()
-
-// Dismiss
-router.dismissSheet()
-router.dismissFullscreenCover()
-```
-
-`SheetPresentation` and `FullscreenCoverPresentation` both conform to `Identifiable`, so they bind directly to SwiftUI's `.sheet(item:)` and `.fullScreenCover(item:)` modifiers.
-
-### Navigation stacks inside a modal
-
-A modal that hosts a multi-step flow gets its own `NavigationStack`, driven by the presentation's bundled stack:
-
-```swift
-.fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
-    NavigationStack(path: router.fullscreenCoverPathBinding()) {
-        view(for: presentation.cover)
-            .navigationDestination(for: AppDestination.self) { destination in
-                view(for: destination)
-            }
-    }
-}
-```
-
-`sheetPathBinding()` does the same for sheets. Both read as empty and discard writes when nothing is presented, so the binding can be built before anything is on screen.
-
-### Swapping one cover for another
-
-SwiftUI drops the incoming presentation if you dismiss one full-screen cover and present another in the same update. `replace(fullscreenCover:)` handles the handoff: it dismisses the current cover and queues the replacement, which the host presents once dismissal finishes.
-
-```swift
-// From anywhere - e.g. a sign-up prompt inside an onboarding cover
-router.replace(fullscreenCover: .login)
-
-// Drained by the host
-.fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
-    view(for: presentation.cover)
-} onDismiss: {
-    if let next = router.takePendingFullscreenCover() {
-        DispatchQueue.main.async { router.present(fullscreenCover: next) }
-    }
-}
-```
-
-With nothing presented, `replace(fullscreenCover:)` presents immediately. Calling it again before the queue drains supersedes the queued cover. `dismissFullscreenCover()` cancels a queued replacement, so drain with `takePendingFullscreenCover()` rather than dismissing again.
-
-### Modal behavior
-
-Sheets and full-screen covers are **global** to the router — there is one of each at a time, and they persist across tab switches by design. This matches iOS native apps like Clock: tap "+" on Alarms to open the new-alarm sheet, then tap Timers, and the sheet stays visible on top.
-
-In practice, end users can't *trigger* a tab switch during a modal — SwiftUI's `.sheet()` covers the tab bar at most detents and blocks underlying interaction. So the persistence rule mainly affects programmatic switches (notifications, deep links).
-
-### Nested sheets
-
-The router holds at most one sheet. For sub-sheets within a flow (e.g. compose → photo picker, email → OTP), present them with a local `@State` binding *inside the parent sheet's view*. SwiftUI stacks them visually; the router stays focused on top-level flows.
+The router holds at most one sheet.
+For sub-sheets within a flow (compose → photo picker, email → OTP), present them with a local `@State` binding *inside the parent sheet's view*.
+SwiftUI stacks them visually; the router stays focused on top-level flows.
 
 ```swift
 struct EmailSheetView: View {
-    @Environment(AppRouter.self) private var router
     @State private var otpPresented = false
 
     var body: some View {
@@ -259,11 +414,11 @@ struct EmailSheetView: View {
 }
 ```
 
-Dismissing the parent sheet (via `router.dismissSheet()`) collapses the entire SwiftUI sheet hierarchy.
+Dismissing the parent sheet collapses the entire SwiftUI sheet hierarchy.
 
-### Handling notifications
+## Handling notifications
 
-When a notification or background event should present a sheet, present it *without* changing tabs — the user returns to wherever they were:
+When a notification or background event should present a sheet, present it *without* changing tabs so the user returns to wherever they were:
 
 ```swift
 .onContinueUserActivity("openAlarm") { activity in
@@ -280,127 +435,90 @@ router.switchTab(to: .alarms)
 router.present(sheet: .editAlarm(id: alarmId))
 ```
 
-## Deep linking
+## Restoring navigation on launch
 
-Conform your tab, destination, sheet, and cover types to the corresponding `URLRoutable*` protocols. Sheet and cover conformance is optional — the router only checks at runtime.
+Save the snapshot to `SceneStorage` whenever it changes and restore it when the scene comes back:
 
 ```swift
-extension AppTab: URLRoutableTab {
-    static func tab(from path: String) -> AppTab? {
-        switch path {
-        case "home":     .home
-        case "profile":  .profile
-        case "settings": .settings
-        default:         nil
-        }
-    }
-}
+struct RootView: View {
+    @State private var router = AppRouter(initialTab: .home)
+    @SceneStorage("navigation") private var savedNavigation: Data?
 
-extension AppDestination: URLRoutableDestination {
-    static func destination(
-        consuming components: ArraySlice<String>,
-        parameters: [String: String]
-    ) -> (destination: AppDestination, consumed: Int)? {
-        guard let head = components.first else { return nil }
-        switch head {
-        case "friend":
-            guard let id = components.dropFirst().first.flatMap(Int.init) else { return nil }
-            return (.friend(id: id), 2)
-        case "settings":
-            return (.settings, 1)
-        default:
-            return nil
-        }
-    }
-}
-
-extension AppSheet: URLRoutableSheet {
-    static func sheet(from path: String) -> AppSheet? {
-        path == "login" ? .login : nil
+    var body: some View {
+        content
+            .onAppear {
+                guard let savedNavigation,
+                      let snapshot = try? JSONDecoder().decode(AppRouter.Snapshot.self, from: savedNavigation)
+                else { return }
+                router.restore(snapshot)
+            }
+            .onChange(of: router.snapshot) { _, snapshot in
+                savedNavigation = try? JSONEncoder().encode(snapshot)
+            }
     }
 }
 ```
 
-Wire it into the view tree:
+# Reference
 
-```swift
-RootView()
-    .onOpenURL(with: router)
-```
+## Protocols
 
-URL conventions:
+| Protocol                     | Module       | Refines                 | Purpose                                         |
+|------------------------------|--------------|-------------------------|-------------------------------------------------|
+| `RouterTab`                  | `RouterCore` | `Hashable`, `Sendable`  | Identifies a tab.                               |
+| `RouterDestination`          | `RouterCore` | `Hashable`, `Sendable`  | Identifies a screen the router can push.        |
+| `RouterSheet`                | `RouterCore` | `Hashable`, `Sendable`  | Identifies a sheet the router can present.      |
+| `RouterFullScreenCover`      | `RouterCore` | `Hashable`, `Sendable`  | Identifies a full-screen cover.                 |
+| `URLRoutableTab`             | `RouterCore` | `RouterTab`             | Adds URL deep-link support for tabs.            |
+| `URLRoutableDestination`     | `RouterCore` | `RouterDestination`     | Adds URL deep-link support for destinations.    |
+| `URLRoutableSheet`           | `RouterCore` | `RouterSheet`           | Adds URL deep-link support for sheets.          |
+| `URLRoutableFullScreenCover` | `RouterCore` | `RouterFullScreenCover` | Adds URL deep-link support for covers.          |
+| `TabPresentable`             | `RouterUI`   | `RouterTab`             | Adds title, image, and role for the tab bar.    |
 
-| URL                                       | Result                                                  |
-|-------------------------------------------|---------------------------------------------------------|
-| `myapp://profile/friend/42`               | Select `.profile`, stack `[.friend(id: 42)]`            |
-| `myapp://sheet/login`                     | Present sheet `.login`                                  |
-| `myapp://sheet/checkout/payment/confirm`  | Present sheet `.checkout`, stack `[.payment, .confirm]` |
-| `myapp://cover/onboarding`                | Present cover `.onboarding`                             |
+## Router at a glance
 
-The `sheet` and `cover` prefixes are reserved by default. Both are configurable on `handleDeepLink(url:sheetPrefix:coverPrefix:)`.
-
-For universal links (`https://example.com/...`), pass `treatHostAsPath: false` so the host (your domain) isn't treated as the first route component.
-
-## API overview
-
-### Protocols
-
-| Protocol                     | Refines      | Purpose                                                  |
-|------------------------------|--------------|----------------------------------------------------------|
-| `RouterTab`                  | `Hashable`   | Identifies a tab; carries title, image, and role hints.  |
-| `RouterDestination`          | `Hashable`   | Identifies a screen the router can push.                 |
-| `RouterSheet`                | `Hashable`   | Identifies a sheet the router can present.               |
-| `RouterFullScreenCover`      | `Hashable`   | Identifies a full-screen cover the router can present.   |
-| `URLRoutableTab`             | `RouterTab`  | Adds URL deep-link support for tabs.                     |
-| `URLRoutableDestination`     | `RouterDestination` | Adds URL deep-link support for destinations.      |
-| `URLRoutableSheet`           | `RouterSheet`| Adds URL deep-link support for sheets.                   |
-| `URLRoutableFullScreenCover` | `RouterFullScreenCover` | Adds URL deep-link support for covers.        |
-
-### Router methods at a glance
-
-- **Path access:** `subscript(tab:)`, `currentPath`, `pathBinding(for:)`, `sheetPathBinding()`, `fullscreenCoverPathBinding()`
+- **State:** `selectedTab`, `subscript(tab:)`, `currentPath`, `presentedSheet`, `presentedFullscreenCover`, `pendingFullscreenCover`
+- **Snapshots:** `snapshot`, `init(snapshot:)`, `restore(_:)`
 - **Tab navigation:** `navigate(to:)`, `navigate(to:in:)`, `switchTab(to:navigatingTo:)`, `switchTab(to:resetTo:)`
 - **Pop:** `pop(_:)`, `popTo(_:in:)`, `popToRoot(in:)`, `popAllToRoot()`
 - **Sheets:** `present(sheet:)`, `navigateInSheet(to:)`, `popInSheet(_:)`, `popInSheetToRoot()`, `dismissSheet()`
 - **Covers:** `present(fullscreenCover:)`, `replace(fullscreenCover:)`, `takePendingFullscreenCover()`, `navigateInFullscreenCover(to:)`, `popInFullscreenCover(_:)`, `popInFullscreenCoverToRoot()`, `dismissFullscreenCover()`
-- **Deep links:** `handleDeepLink(url:treatHostAsPath:sheetPrefix:coverPrefix:)`, `View.onOpenURL(with:)`
+- **Deep links:** `handleDeepLink(url:treatHostAsPath:sheetPrefix:coverPrefix:)`
+- **SwiftUI (`RouterUI`):** `pathBinding(for:)`, `sheetPathBinding()`, `fullscreenCoverPathBinding()`, `View.onOpenURL(with:)`
+
+## Development
+
+```sh
+swift test                              # RouterCore + RouterUI bindings, headless on macOS
+scripts/check-coverage.sh 90            # same, with RouterCore's line-coverage gate
+scripts/check-core-swiftui-free.sh      # RouterCore's interface must not mention SwiftUI
+xcodebuild test -scheme Router-Package \
+  -destination "platform=iOS Simulator,id=$(scripts/ios-simulator-id.sh)"
+```
+
+CI runs all of the above on every pull request and publishes DocC archives for both modules as a build artifact.
 
 ## Status
 
-Router is in **0.x** — the public API may evolve between minor versions as real-world usage shakes out details. Pinning to `.upToNextMinor(from: "0.2.0")` is recommended until 1.0.0.
+Router is in **0.x**: the public API may change between minor versions.
+Pin with `.upToNextMinor(from:)` until 1.0.
 
-Tests run on the iOS simulator, since the package targets iOS only:
+**Known limitations**
 
-```sh
-xcodebuild test -scheme Router -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
-```
-
-**Known limitations in 0.2**
-
-- No state restoration. Cold-launching the app loses presented sheets, covers, and per-tab navigation stacks. The presentation structs aren't `Codable` yet.
-- The router is designed around `TabView` + `NavigationStack`. **`NavigationSplitView` (three-column iPad / macOS layouts) is not modeled.** Apps using `.tabViewStyle(.sidebarAdaptable)` on iPadOS 18+ work out of the box; native split-view layouts are out of scope for now.
-- Single sheet at a time at the router level. Nested sheets work via SwiftUI `@State` (see [Nested sheets](#nested-sheets) above), but the router doesn't track sub-sheets.
+- The router is designed around `TabView` + `NavigationStack`.
+  `NavigationSplitView` (three-column iPad and macOS layouts) is not modeled.
+  `RouterCore` builds on macOS so tools can run it, not so macOS apps can use it.
+- One sheet at a time at the router level.
+  Nested sheets work through SwiftUI `@State` (see [Nested sheets](#nested-sheets)), but the router doesn't track them.
 
 ## Roadmap
 
-**0.3 — State restoration**
-- `Codable` conformance for `SheetPresentation` / `FullscreenCoverPresentation` plus a `Router.State` snapshot for `SceneStorage` integration
-- CI workflow on GitHub Actions
-- Universal links example in the README
+- **0.4**: a navigation event stream, two-way routes (`currentRoute`, `navigate(route:)`), and explicit deep-link errors.
+- **0.5**: a smaller API built on a `Context` parameter, and cover replacement handled inside the router.
+- **1.0**: deprecated 0.x names removed.
+- **Later**: first-class iPad and macOS layouts (`NavigationSplitView`, multi-window scenes).
 
-**0.4 — Ergonomics**
-- `popUntil(where:)` predicate-based pop
-- `navigate(to:replacingTopWith:)` for sign-in → home flows
-- Optional sheet stacking (`pushSheet(_:)` / `sheetStack`) if real-world usage demands centralized sub-sheet state
-
-**Future — iPad and macOS first-class support**
-- A sibling `SplitRouter` (or generalized model) for `NavigationSplitView`-driven three-column layouts
-- macOS-specific affordances: multi-window scenes, toolbar-driven actions, removing the iOS-only `fullScreenCover` API on that platform
-- `TabSection` and `TabViewCustomization` integration patterns documented as a guide
-
-**Out of scope**
-- Combine-based reactive APIs (the router is built around Swift Concurrency / `@Observable`).
-- View-layer concerns like presentation detents, custom transitions, and sheet sizing — handled by SwiftUI modifiers at the call site.
+Out of scope: Combine APIs, and view-layer concerns like detents, transitions, and sheet sizing, which stay at the call site.
 
 ## License
 

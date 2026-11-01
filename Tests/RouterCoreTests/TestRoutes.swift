@@ -1,38 +1,21 @@
-import Router
-import SwiftUI
+import RouterCore
 
-enum TestTab: Hashable, Sendable, RouterTab {
+enum TestTab: String, Codable, CaseIterable, RouterTab {
 	case home, profile, settings
-
-	var title: LocalizedStringKey? {
-		switch self {
-		case .home: "Home"
-		case .profile: "Profile"
-		case .settings: "Settings"
-		}
-	}
-
-	var image: TabImage? {
-		switch self {
-		case .home: .systemImage("house")
-		case .profile: .systemImage("person.circle")
-		case .settings: .asset("SettingsIcon")
-		}
-	}
 }
 
-enum TestDestination: Hashable, Sendable, RouterDestination {
+enum TestDestination: Codable, RouterDestination {
 	case friend(id: Int)
 	case photos
 	case settings
 }
 
-enum TestSheet: Hashable, Sendable, RouterSheet {
+enum TestSheet: String, Codable, CaseIterable, RouterSheet {
 	case login
 	case checkout
 }
 
-enum TestCover: Hashable, Sendable, RouterFullScreenCover {
+enum TestCover: String, Codable, CaseIterable, RouterFullScreenCover {
 	case onboarding
 	case player
 }

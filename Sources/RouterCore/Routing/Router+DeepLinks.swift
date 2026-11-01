@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 
 public extension Router where Tab: URLRoutableTab, Destination: URLRoutableDestination {
 	/// Routes a URL into the router as a tab change, sheet presentation, or full-screen cover
@@ -117,31 +116,5 @@ public extension Router where Tab: URLRoutableTab, Destination: URLRoutableDesti
 		}
 
 		return destinations
-	}
-}
-
-public extension View {
-	/// Routes incoming URLs through the given router.
-	///
-	/// Convenience wrapper around `.onOpenURL { router.handleDeepLink(url: $0) }`.
-	///
-	/// ## Example
-	///
-	/// ```swift
-	/// RootView()
-	///     .onOpenURL(with: router)
-	/// ```
-	///
-	/// - Parameters:
-	///   - router: The router that should handle the URL.
-	///   - treatHostAsPath: See ``Router/handleDeepLink(url:treatHostAsPath:sheetPrefix:coverPrefix:)``.
-	///     Defaults to `true` for custom URL schemes.
-	func onOpenURL<Tab, Destination, Sheet, FullscreenCover>(
-		with router: Router<Tab, Destination, Sheet, FullscreenCover>,
-		treatHostAsPath: Bool = true,
-	) -> some View where Tab: URLRoutableTab, Destination: URLRoutableDestination {
-		onOpenURL { url in
-			router.handleDeepLink(url: url, treatHostAsPath: treatHostAsPath)
-		}
 	}
 }

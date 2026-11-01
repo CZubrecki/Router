@@ -1,5 +1,5 @@
 import Testing
-@testable import Router
+@testable import RouterCore
 
 @MainActor
 @Suite("Tab and stack navigation")
@@ -180,19 +180,4 @@ struct NavigationTests {
 		#expect(router[.profile] == [.photos, .settings])
 	}
 
-	@Test("The path binding reads and writes the tab's stack")
-	func pathBinding() {
-		let router = TestRouter(initialTab: .home)
-		let binding = router.pathBinding(for: .home)
-
-		#expect(binding.wrappedValue.isEmpty)
-
-		router.navigate(to: .photos)
-
-		#expect(binding.wrappedValue == [.photos])
-
-		binding.wrappedValue = [.settings]
-
-		#expect(router[.home] == [.settings])
-	}
 }
