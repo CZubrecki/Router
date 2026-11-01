@@ -42,8 +42,8 @@ import Observation
 ///     .sheet(item: $router.presentedSheet) { presentation in
 ///         // resolve sheet view from presentation.sheet
 ///     }
-///     .fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
-///         // resolve cover view from presentation.cover
+///     .fullScreenCover(router: router) { cover in
+///         // resolve cover view
 ///     }
 /// }
 /// ```
@@ -129,8 +129,8 @@ public final class Router<
 		set { assignCover(newValue) }
 	}
 
-	/// A cover queued by ``replace(cover:)``, which the router presents on the next main-actor
-	/// turn, or `nil` when nothing is queued.
+	/// A cover queued by ``replace(cover:)``, waiting for the outgoing cover to finish
+	/// dismissing, or `nil` when nothing is queued.
 	public private(set) var pendingFullscreenCover: FullscreenCover?
 
 	/// The URL scheme and reserved prefixes used to render and parse routes.
@@ -143,6 +143,8 @@ public final class Router<
 
 	private var tabSelection: Tab
 	private var paths: [Tab: [Destination]] = [:]
+	@ObservationIgnored
+	private var tabOrder: [Tab] = []
 	private var sheetState: SheetPresentation<Sheet, Destination>?
 	private var coverState: FullscreenCoverPresentation<FullscreenCover, Destination>?
 
@@ -192,6 +194,7 @@ public final class Router<
 		guard snapshot != self.snapshot else { return }
 		tabSelection = snapshot.selectedTab
 		paths = snapshot.paths
+		tabOrder = snapshot.orderedTabs
 		sheetState = snapshot.presentedSheet
 		coverState = snapshot.presentedFullscreenCover
 		pendingFullscreenCover = snapshot.pendingFullscreenCover
@@ -306,10 +309,10 @@ public final class Router<
 	/// Clears the navigation stacks of every tab.
 	///
 	/// Use at sign-out or other "reset the whole app" moments. Emits one pop event per tab that
-	/// had a non-empty stack.
+	/// had a non-empty stack, in tab order when `Tab` is `Comparable` and otherwise in the order
+	/// the stacks were started.
 	public func popAllToRoot() {
-		let tabs = paths.keys.sorted { String(describing: $0) < String(describing: $1) }
-		for tab in tabs {
+		for tab in tabOrder.sortedIfComparable() ?? tabOrder {
 			popToRoot(in: .tab(tab))
 		}
 	}
@@ -354,11 +357,12 @@ public final class Router<
 
 	/// Swaps the presented full-screen cover for a different one.
 	///
-	/// SwiftUI drops a cover presented in the same update that dismisses another. When a cover is
-	/// showing, this dismisses it and queues the replacement in ``pendingFullscreenCover``; the
-	/// router presents the queued cover itself on the next main-actor turn, so the host needs no
-	/// `onDismiss` handler. With nothing presented this presents immediately. Replacing again
-	/// before the queue drains supersedes the queued cover.
+	/// SwiftUI drops a cover presented while another is still dismissing. When a cover is showing,
+	/// this dismisses it and queues the replacement in ``pendingFullscreenCover``. The router
+	/// presents the queued cover when the host reports ``coverDidDismiss()``, which `RouterUI`'s
+	/// `fullScreenCover(router:)` modifier does, or on the next main-actor turn when no host has
+	/// reported showing a cover, as in headless use. With nothing presented this presents
+	/// immediately. Replacing again before the queue drains supersedes the queued cover.
 	///
 	/// Emits the outgoing cover's dismissal now and the replacement's presentation when it
 	/// happens.
@@ -400,16 +404,39 @@ public final class Router<
 	@ObservationIgnored
 	private(set) var pendingCoverTask: Task<Void, Never>?
 
+	@ObservationIgnored
+	private(set) var hostIsShowingCover = false
+
+	/// Tells the router that the host started showing the presented full-screen cover.
+	///
+	/// From then until ``coverDidDismiss()``, a cover queued by ``replace(cover:)`` waits for the
+	/// host to finish dismissing instead of presenting on the next main-actor turn. `RouterUI`'s
+	/// `fullScreenCover(router:)` modifier calls both hooks; call them yourself only when
+	/// presenting covers some other way.
+	public func coverDidAppear() {
+		hostIsShowingCover = true
+	}
+
+	/// Tells the router that the host finished dismissing a full-screen cover, which presents a
+	/// cover queued by ``replace(cover:)``.
+	public func coverDidDismiss() {
+		hostIsShowingCover = false
+		pendingCoverTask?.cancel()
+		presentPendingCover()
+	}
+
 	private func schedulePendingCover() {
-		guard coverState == nil, pendingFullscreenCover != nil, pendingCoverTask == nil else { return }
+		guard !hostIsShowingCover, coverState == nil, pendingFullscreenCover != nil, pendingCoverTask == nil
+		else { return }
 		pendingCoverTask = Task { [weak self] in
+			guard !Task.isCancelled else { return }
 			self?.presentPendingCover()
 		}
 	}
 
 	private func presentPendingCover() {
 		pendingCoverTask = nil
-		guard !Task.isCancelled, coverState == nil, let next = pendingFullscreenCover else { return }
+		guard coverState == nil, let next = pendingFullscreenCover else { return }
 		pendingFullscreenCover = nil
 		coverState = FullscreenCoverPresentation(cover: next)
 		emit(.presented(.cover(next)))
@@ -459,10 +486,19 @@ public final class Router<
 
 	private func writeStack(_ stack: [Destination], in context: Context) {
 		switch context {
-		case let .tab(tab): paths[tab] = stack.isEmpty ? nil : stack
-		case .currentTab: paths[tabSelection] = stack.isEmpty ? nil : stack
+		case let .tab(tab): writeStack(stack, for: tab)
+		case .currentTab: writeStack(stack, for: tabSelection)
 		case .sheet: sheetState?.stack = stack
 		case .cover: coverState?.stack = stack
+		}
+	}
+
+	private func writeStack(_ stack: [Destination], for tab: Tab) {
+		if stack.isEmpty {
+			paths[tab] = nil
+			tabOrder.removeAll { $0 == tab }
+		} else if paths.updateValue(stack, forKey: tab) == nil {
+			tabOrder.append(tab)
 		}
 	}
 

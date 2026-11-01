@@ -13,9 +13,9 @@
 /// // Present:
 /// router.present(cover: .onboarding)
 ///
-/// // Resolve in your view tree:
-/// .fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
-///     switch presentation.cover {
+/// // Resolve in your view tree (RouterUI):
+/// .fullScreenCover(router: router) { cover in
+///     switch cover {
 ///     case .onboarding:               OnboardingFlow()
 ///     case .videoPlayer(let id):      VideoPlayer(id: id)
 ///     }

@@ -130,6 +130,20 @@ struct SnapshotTests {
 		#expect(json == #"{"paths":[{"stack":[{"settings":{}}],"tab":"home"},{"stack":[{"photos":{}}],"tab":"profile"}],"presentedSheet":{"sheet":"login","stack":[]},"selectedTab":"profile"}"#)
 	}
 
+	@Test("Encoded stacks follow the tab order when tabs are Comparable")
+	func comparableTabOrder() throws {
+		let encoder = JSONEncoder()
+		encoder.outputFormatting = [.sortedKeys]
+		let snapshot = RankedRouter.Snapshot(
+			selectedTab: .alpha,
+			paths: [.alpha: [.photos], .mike: [.photos], .zulu: [.photos]],
+		)
+
+		let json = try #require(String(data: encoder.encode(snapshot), encoding: .utf8))
+
+		#expect(json == #"{"paths":[{"stack":[{"photos":{}}],"tab":{"zulu":{}}},{"stack":[{"photos":{}}],"tab":{"alpha":{}}},{"stack":[{"photos":{}}],"tab":{"mike":{}}}],"selectedTab":{"alpha":{}}}"#)
+	}
+
 	@Test("Decoding rejects two stacks for the same tab")
 	func duplicateTabRejected() {
 		let json = Data(#"{"selectedTab":"home","paths":[{"tab":"home","stack":[]},{"tab":"home","stack":[]}]}"#.utf8)

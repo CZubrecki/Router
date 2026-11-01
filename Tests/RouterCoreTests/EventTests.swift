@@ -119,17 +119,59 @@ struct EventTests {
 		])
 	}
 
-	@Test("Popping every tab emits a pop per non-empty tab in a stable order")
+	@Test("Popping every tab emits a pop per non-empty tab in the order the stacks were started")
 	func popAllToRoot() {
 		let router = TestRouter(initialTab: .home)
 		router.navigate(to: .photos, in: .tab(.settings))
+		router.navigate(to: .photos, in: .tab(.profile))
 		router.navigate(to: .photos, .settings, in: .tab(.home))
+		router.popToRoot(in: .tab(.settings))
+		router.navigate(to: .settings, in: .tab(.settings))
+		router.navigate(to: .settings, in: .tab(.profile))
 		let recorder = record(router)
 
 		router.popAllToRoot()
 
 		#expect(recorder.events == [
+			.popped(count: 2, in: .tab(.profile)),
 			.popped(count: 2, in: .tab(.home)),
+			.popped(count: 1, in: .tab(.settings)),
+		])
+	}
+
+	@Test("Popping every tab follows the tab order when tabs are Comparable")
+	func popAllToRootComparable() {
+		let router = RankedRouter(initialTab: .alpha)
+		var events: [RankedRouter.NavigationEvent] = []
+		router.navigate(to: .photos, in: .tab(.mike))
+		router.navigate(to: .photos, in: .tab(.alpha))
+		router.navigate(to: .photos, in: .tab(.zulu))
+		router.onEvent = { events.append($0) }
+
+		router.popAllToRoot()
+
+		#expect(events == [
+			.popped(count: 1, in: .tab(.zulu)),
+			.popped(count: 1, in: .tab(.alpha)),
+			.popped(count: 1, in: .tab(.mike)),
+		])
+	}
+
+	@Test("Popping every tab after a restore follows the snapshot's order")
+	func popAllToRootAfterRestore() {
+		let router = TestRouter(initialTab: .home)
+		router.navigate(to: .photos, in: .tab(.settings))
+		router.restore(TestRouter.Snapshot(
+			selectedTab: .home,
+			paths: [.settings: [.photos], .profile: [.photos], .home: [.photos]],
+		))
+		let recorder = record(router)
+
+		router.popAllToRoot()
+
+		#expect(recorder.events == [
+			.popped(count: 1, in: .tab(.home)),
+			.popped(count: 1, in: .tab(.profile)),
 			.popped(count: 1, in: .tab(.settings)),
 		])
 	}

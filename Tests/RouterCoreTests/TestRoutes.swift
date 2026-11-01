@@ -22,6 +22,12 @@ enum TestCover: String, Codable, CaseIterable, RouterFullScreenCover {
 
 typealias TestRouter = Router<TestTab, TestDestination, TestSheet, TestCover>
 
+enum RankedTab: Codable, Comparable, RouterTab {
+	case zulu, alpha, mike
+}
+
+typealias RankedRouter = Router<RankedTab, TestDestination, TestSheet, TestCover>
+
 // MARK: - Deep linking
 
 extension TestTab: URLRoutableTab {

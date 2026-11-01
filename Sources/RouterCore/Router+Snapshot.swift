@@ -10,7 +10,8 @@ extension Router {
 	/// ```
 	///
 	/// Empty stacks are dropped from ``paths``, so a tab that was pushed onto and popped back to
-	/// its root compares equal to one that was never touched.
+	/// its root compares equal to one that was never touched. Encoded stacks are listed in tab
+	/// order when `Tab` is `Comparable`, and otherwise sorted by each tab's description.
 	public struct Snapshot: Hashable, Sendable {
 		/// The selected tab.
 		public var selectedTab: Tab
@@ -49,6 +50,11 @@ extension Router {
 			self.presentedFullscreenCover = presentedFullscreenCover
 			self.pendingFullscreenCover = pendingFullscreenCover
 		}
+
+		var orderedTabs: [Tab] {
+			let tabs = Array(paths.keys)
+			return tabs.sortedIfComparable() ?? tabs.sorted { String(describing: $0) < String(describing: $1) }
+		}
 	}
 }
 
@@ -68,7 +74,7 @@ where Tab: Codable, Destination: Codable, Sheet: Codable, FullscreenCover: Codab
 	}
 
 	// A dictionary keyed by a non-string type encodes as an unordered array, so paths are
-	// written as entries sorted by tab to keep encoded fixtures byte-stable across runs.
+	// written as entries in a fixed tab order to keep encoded fixtures byte-stable across runs.
 	public func encode(to encoder: any Encoder) throws {
 		var container = encoder.container(keyedBy: CodingKeys.self)
 		try container.encode(selectedTab, forKey: .selectedTab)
@@ -77,11 +83,10 @@ where Tab: Codable, Destination: Codable, Sheet: Codable, FullscreenCover: Codab
 		try container.encodeIfPresent(pendingFullscreenCover, forKey: .pendingFullscreenCover)
 
 		var pathsContainer = container.nestedUnkeyedContainer(forKey: .paths)
-		let entries = paths.sorted { String(describing: $0.key) < String(describing: $1.key) }
-		for (tab, stack) in entries {
+		for tab in orderedTabs {
 			var entry = pathsContainer.nestedContainer(keyedBy: PathCodingKeys.self)
 			try entry.encode(tab, forKey: .tab)
-			try entry.encode(stack, forKey: .stack)
+			try entry.encode(paths[tab, default: []], forKey: .stack)
 		}
 	}
 

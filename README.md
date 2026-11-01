@@ -154,7 +154,8 @@ router.restore(saved)                    // put a live router back into that sta
 ```
 
 `Snapshot` is `Codable` when all four routing types are.
-Paths are encoded as a list sorted by tab, so with `.sortedKeys` the JSON is byte-stable across runs and fixtures diff cleanly in git:
+Paths are encoded as a list in a fixed tab order, so with `.sortedKeys` the JSON is byte-stable across runs and fixtures diff cleanly in git.
+The order is the tab type's own when it is `Comparable`, and each tab's description otherwise:
 
 ```swift
 let encoder = JSONEncoder()
@@ -206,7 +207,7 @@ Task {
 router.onEvent = { event in socket.send(.navigation(event)) }
 ```
 
-- Each router method emits exactly one event. The exception is `popAllToRoot()`, which emits one pop per tab it clears.
+- Each router method emits exactly one event. The exception is `popAllToRoot()`, which emits one pop per tab it clears: in tab order when `Tab` is `Comparable`, and otherwise in the order the stacks were started.
 - Calls that change nothing (popping an empty stack, pushing into a sheet that isn't presented) emit nothing.
 - Writes through SwiftUI bindings emit events too: a swipe-back is a `popped`, a tab tap is a `switchedTab`, a swipe-to-dismiss is a `dismissed`.
 - Contexts in events are concrete: `.currentTab` is reported as the `.tab(_)` it resolved to.
@@ -367,8 +368,8 @@ struct RootView: View {
         .sheet(item: $router.presentedSheet) { presentation in
             view(for: presentation.sheet)
         }
-        .fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
-            view(for: presentation.cover)
+        .fullScreenCover(router: router) { cover in
+            view(for: cover)
         }
         .onOpenURL(with: router)
         .environment(router)
@@ -376,7 +377,8 @@ struct RootView: View {
 }
 ```
 
-`SheetPresentation` and `FullscreenCoverPresentation` conform to `Identifiable`, so they bind directly to `.sheet(item:)` and `.fullScreenCover(item:)`.
+`SheetPresentation` and `FullscreenCoverPresentation` conform to `Identifiable`, so they bind directly to `.sheet(item:)`.
+Covers use `.fullScreenCover(router:)`, which also tells the router when a cover appears and finishes dismissing (see [Swapping one cover for another](#swapping-one-cover-for-another)).
 
 ## Tab titles and images
 
@@ -410,9 +412,9 @@ extension AppTab: TabPresentable {
 A modal that hosts a multi-step flow gets its own `NavigationStack`, driven by the presentation's bundled stack:
 
 ```swift
-.fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
+.fullScreenCover(router: router) { cover in
     NavigationStack(path: router.fullscreenCoverPathBinding()) {
-        view(for: presentation.cover)
+        view(for: cover)
             .navigationDestination(for: AppDestination.self) { destination in
                 view(for: destination)
             }
@@ -425,19 +427,22 @@ Both read as empty and discard writes when nothing is presented, so the binding 
 
 ## Swapping one cover for another
 
-SwiftUI drops the incoming presentation if you dismiss one full-screen cover and present another in the same update.
-`replace(cover:)` handles the handoff: it dismisses the current cover, queues the replacement in `pendingFullscreenCover`, and presents it itself on the next main-actor turn.
-The host needs nothing beyond the plain modifier:
+SwiftUI can drop a full-screen cover presented while another is still dismissing.
+`replace(cover:)` handles the handoff: it dismisses the current cover and queues the replacement in `pendingFullscreenCover`.
+The `.fullScreenCover(router:)` modifier tells the router when the outgoing cover has finished dismissing, and the router presents the queued cover then:
 
 ```swift
 // From anywhere - e.g. a sign-up prompt inside an onboarding cover
 router.replace(cover: .login)
 
 // Host
-.fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
-    view(for: presentation.cover)
+.fullScreenCover(router: router) { cover in
+    view(for: cover)
 }
 ```
+
+Hosts that present covers some other way call `router.coverDidAppear()` from the cover's `onAppear` and `router.coverDidDismiss()` from `onDismiss`.
+Without those calls, as in headless tests, the router presents the queued cover on the next main-actor turn.
 
 With nothing presented, `replace(cover:)` presents immediately.
 Calling it again before the handoff supersedes the queued cover, and `dismiss(.cover)` or presenting a cover directly cancels it.
