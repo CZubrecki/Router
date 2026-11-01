@@ -162,3 +162,26 @@ The deprecated 0.2 names listed in the 0.5 table are gone, along with `takePendi
 Fix any remaining deprecation warnings on 0.5 first; once a project builds warning-free on 0.5, it builds on 1.0 unchanged.
 
 Pin with `.upToNextMajor(from: "1.0.0")`.
+
+## 1.0 → 1.1: cover lifecycle hooks and tab order
+
+Nothing breaks.
+Present covers with the new `fullScreenCover(router:)` modifier so `replace(cover:)` presents the replacement after the outgoing cover finishes dismissing:
+
+```swift
+// Before
+.fullScreenCover(item: $router.presentedFullscreenCover) { presentation in
+    view(for: presentation.cover)
+}
+
+// After
+.fullScreenCover(router: router) { cover in
+    view(for: cover)
+}
+```
+
+A host that keeps its own `.fullScreenCover(item:)` can call `router.coverDidAppear()` and `router.coverDidDismiss()` itself, or leave the router to present the replacement on the next main-actor turn as in 1.0.
+
+`popAllToRoot()` emits its pops in a new order: tab order when `Tab` is `Comparable`, and otherwise the order the stacks were started.
+Snapshot JSON keeps its order unless `Tab` is `Comparable`, in which case stacks are listed in tab order.
+Conform the tab enum to `Comparable` to choose the order explicitly, and regenerate any snapshot or event fixtures that recorded the old one.

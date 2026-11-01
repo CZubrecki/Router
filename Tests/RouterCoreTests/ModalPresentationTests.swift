@@ -298,4 +298,94 @@ struct ModalPresentationTests {
 		#expect(router.presentedFullscreenCover == nil)
 		#expect(router.pendingCoverTask == nil)
 	}
+
+	// MARK: - Host handoff
+
+	@Test("A replacement waits for the host to finish dismissing a cover it showed")
+	func replacementWaitsForHostDismissal() async {
+		let router = TestRouter(initialTab: .home)
+		router.present(cover: .player)
+		router.coverDidAppear()
+
+		router.replace(cover: .onboarding)
+		for _ in 0..<10 { await Task.yield() }
+
+		#expect(router.pendingCoverTask == nil)
+		#expect(router.presentedFullscreenCover == nil)
+		#expect(router.pendingFullscreenCover == .onboarding)
+
+		router.coverDidDismiss()
+
+		#expect(router.presentedFullscreenCover == FullscreenCoverPresentation(cover: .onboarding))
+		#expect(router.pendingFullscreenCover == nil)
+	}
+
+	@Test("A host dismissal ends the wait for every later replacement")
+	func hostDismissalResetsHandoff() async {
+		let router = TestRouter(initialTab: .home)
+		router.present(cover: .player)
+		router.coverDidAppear()
+		router.dismiss(.cover)
+		router.coverDidDismiss()
+
+		#expect(router.presentedFullscreenCover == nil)
+
+		router.present(cover: .player)
+		router.replace(cover: .onboarding)
+		await router.pendingCoverTask?.value
+
+		#expect(router.presentedFullscreenCover?.cover == .onboarding)
+	}
+
+	@Test("A host dismissal before the next turn presents the replacement at once")
+	func hostDismissalPreemptsTask() async throws {
+		let router = TestRouter(initialTab: .home)
+		var presented: [TestCover] = []
+		router.onEvent = { event in
+			if case let .presented(.cover(cover)) = event { presented.append(cover) }
+		}
+		router.present(cover: .player)
+		router.replace(cover: .onboarding)
+		let task = try #require(router.pendingCoverTask)
+
+		router.coverDidDismiss()
+		await task.value
+
+		#expect(router.presentedFullscreenCover?.cover == .onboarding)
+		#expect(router.pendingCoverTask == nil)
+		#expect(presented == [.player, .onboarding])
+	}
+
+	@Test("A cover dismissed through its binding while the host shows it waits for the host")
+	func bindingDismissalWaitsForHost() async {
+		let router = TestRouter(initialTab: .home)
+		router.restore(TestRouter.Snapshot(
+			selectedTab: .home,
+			presentedFullscreenCover: FullscreenCoverPresentation(cover: .onboarding),
+			pendingFullscreenCover: .player,
+		))
+		router.coverDidAppear()
+
+		router.presentedFullscreenCover = nil
+		for _ in 0..<10 { await Task.yield() }
+
+		#expect(router.presentedFullscreenCover == nil)
+
+		router.coverDidDismiss()
+
+		#expect(router.presentedFullscreenCover?.cover == .player)
+	}
+
+	@Test("A host dismissal with nothing queued presents nothing")
+	func hostDismissalWithoutQueue() {
+		let router = TestRouter(initialTab: .home)
+		router.present(cover: .player)
+		router.coverDidAppear()
+		router.dismiss(.cover)
+
+		router.coverDidDismiss()
+
+		#expect(router.presentedFullscreenCover == nil)
+		#expect(router.pendingFullscreenCover == nil)
+	}
 }
