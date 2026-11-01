@@ -5,7 +5,7 @@ Each section lists what changed in one release and the mechanical edit that port
 Apply them in order when skipping releases.
 
 The 0.3, 0.4, and 0.5 steps were milestones on the way to 1.0 and were never tagged.
-The `v0.3.0` tag predates them and still has the 0.2 API, so porting from any 0.x tag to `v1.0.0` means applying every section below.
+Porting from `v0.2.0` to `v1.0.0` means applying every section below.
 
 ## 0.2 → 0.3: RouterCore and RouterUI
 

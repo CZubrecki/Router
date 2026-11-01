@@ -4,7 +4,7 @@ extension Array {
 		return sorted(as: type)
 	}
 
-	private func sorted<Key: Comparable>(as _: Key.Type) -> [Element] {
-		sorted { ($0 as! Key) < ($1 as! Key) }
+	private func sorted<Key: Comparable>(as _: Key.Type) -> [Element]? {
+		(self as? [Key])?.sorted() as? [Element]
 	}
 }
